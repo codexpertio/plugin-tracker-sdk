@@ -1,0 +1,140 @@
+<?xml version="1.0"?>
+<ruleset name="plugin-tracker-sdk">
+	<description>Coding standards for the Plugin Tracker SDK (codexpertio/plugin-tracker-sdk).</description>
+
+	<file>.</file>
+	<exclude-pattern>/vendor/*</exclude-pattern>
+	<exclude-pattern>/dist/*</exclude-pattern>
+	<exclude-pattern>/tests/*/fixtures/*</exclude-pattern>
+	<!--
+		tests/php/utils/ holds deliberately un-namespaced global helper classes, following the house
+		convention (wc-affiliate tests/php/utils/). They are NOT carved out of
+		WordPress.NamingConventions.PrefixAllGlobals: that sniff already reports every file in this
+		package (19 findings, all pre-existing), because `prefixes` below is configured as
+		cx_tracker/CX_TRACKER while the shipped namespace is Codexpert\PluginTracker. Exempting one
+		test file would suppress a single instance of a systemic mismatch and hide the real issue.
+		Either widen `prefixes` to cover the namespace, or leave all 19 visible, but do
+		it package-wide, not per-file.
+	-->
+	<exclude-pattern>*.dist</exclude-pattern>
+
+	<arg name="extensions" value="php"/>
+	<arg name="colors"/>
+	<arg value="ps"/>
+
+	<!--
+		PHPCompatibility with testVersion 7.2- catches a SUBSET of 7.3+ syntax, not all of it.
+		Measured against the locked phpcompatibility/php-compatibility 9.3.5 (a 2019 release):
+
+		  caught:     typed properties, ??=, trailing comma in calls, array unpacking, array_key_first
+		  NOT caught: fn() =>, match, ?->, str_contains / str_starts_with / str_ends_with
+
+		So this ruleset is a useful first line but it is NOT the guarantee. The 7.2 floor is actually
+		held by `composer analyze`: PHPStan with phpVersion 70200 reports arrow functions and match
+		as syntax errors and the PHP 8 string functions as not found. Both commands matter, and a
+		change that passes lint alone has not been checked against the floor.
+	-->
+	<config name="testVersion" value="7.2-"/>
+	<config name="minimum_wp_version" value="5.0"/>
+
+	<!--
+		Only phpcompatibility/php-compatibility is a declared dependency (see composer.json). The
+		"WordPress" flavour of this ruleset (PHPCompatibilityWP) additionally checks WP-specific
+		deprecations, but that package (phpcompatibility/phpcompatibility-wp) is not installed here;
+		referencing it would make phpcs fail to load the ruleset at all. Plain PHPCompatibility is
+		the correct choice for what is actually required.
+	-->
+	<rule ref="PHPCompatibility"/>
+
+	<rule ref="WordPress">
+		<!--
+			This package autoloads via PSR-4 (Config.php, Consent/Gate.php, Storage/Queue.php, ...),
+			which is required by Composer and is fundamentally incompatible with WP core's
+			"class-name-with-dashes.php" file-naming convention. Excluded rather than fought.
+		-->
+		<exclude name="WordPress.Files.FileName"/>
+	</rule>
+
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<properties>
+			<property name="prefixes" type="array">
+				<element value="cx_tracker"/>
+				<element value="CX_TRACKER"/>
+			</property>
+		</properties>
+	</rule>
+
+	<rule ref="WordPress.WP.I18n">
+		<properties>
+			<property name="text_domain" type="array">
+				<element value="plugin-tracker-sdk"/>
+			</property>
+		</properties>
+	</rule>
+
+	<!--
+		PrefixAllGlobals exists to stop procedural WordPress code from colliding in the global
+		namespace: prefix your functions, constants and globals, or two plugins will fight. This
+		package declares nothing in the global namespace at all. Every class lives under
+		Codexpert\PluginTracker, so the sniff has nothing to protect and reports every file purely
+		because the namespace does not begin with "cx_tracker".
+
+		Collision safety, which is the sniff's actual concern, is handled here twice over and by a
+		stronger mechanism: PSR-4 namespacing, plus bin/build-dist.sh rewriting the namespace to a
+		per-version prefix for every distributed copy. That build step exists precisely because
+		several consumers on one site may each bundle a different version of this SDK.
+
+		Excluded rather than silenced file by file, because it is a systemic mismatch between the
+		sniff and a namespaced library, not 19 individual defects.
+	-->
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<exclude name="WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedNamespaceFound"/>
+	</rule>
+
+	<!--
+		Test files are held to the source rules for correctness sniffs but not for the
+		documentation and WordPress-wrapper sniffs. Two reasons, both specific rather than blanket:
+
+		1. Tests legitimately call raw json_encode() to build fixtures and expected payloads. They
+		   are constructing test data, not calling into WordPress, so wp_json_encode() is not the
+		   right function there.
+		2. The option-store helper in tests/php/utils/ is intentionally an un-namespaced global
+		   class, following the house tests/php/utils/ convention, so the global-prefix sniffs
+		   report it by design.
+
+		Per-sniff and scoped to tests/ so nothing here relaxes a rule for src/.
+	-->
+	<rule ref="WordPress.WP.AlternativeFunctions.json_encode_json_encode">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.WP.AlternativeFunctions.file_system_operations_fwrite">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Universal.NamingConventions.NoReservedKeywordParameterNames">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Generic.Commenting.DocComment">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Squiz.Commenting.FunctionComment.Missing">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="Generic.CodeAnalysis.UnusedFunctionParameter">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<!--
+		Two more test-only relaxations. The escaping sniff fires where a test deliberately asserts on
+		RAW output in order to prove the SOURCE escapes it; escaping inside the test would defeat the
+		test. mt_rand() appears only in the wp_rand() stub, which exists precisely to stand in for
+		wp_rand().
+	-->
+	<rule ref="WordPress.Security.EscapeOutput">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+	<rule ref="WordPress.WP.AlternativeFunctions.rand_mt_rand">
+		<exclude-pattern>tests/*</exclude-pattern>
+	</rule>
+</ruleset>
