@@ -27,7 +27,7 @@
 # walk composer.lock, prefix every third-party package's namespace, and fix up every call
 # site that referenced it. This package's composer.json requires nothing but `php` at
 # runtime (`"require": {"php": ">=7.2"}`) -- there is no vendored dependency tree to scope,
-# only this SDK's own 10 files under src/, whose namespaces all sit under a single root
+# only this SDK's own 11 files under src/, whose namespaces all sit under a single root
 # (Codexpert\PluginTracker), with zero dynamic class-name construction (`::class`, `new $var`,
 # `call_user_func`, `class_exists`, `is_a`, `get_class` -- grep confirms none in src/).
 #
@@ -44,7 +44,7 @@
 #     namespace Codexpert\PluginTracker\Storage;  ->  namespace <PREFIX>\Storage;
 #     use       Codexpert\PluginTracker\Config;   ->  use       <PREFIX>\Config;
 #
-# Verified mechanically, not assumed: 39 occurrences total -- 10 `namespace` declarations (3 root
+# Verified mechanically, not assumed: 43 occurrences total -- 11 `namespace` declarations (4 root
 # + 7 sub), 19 `use` imports, 10 `@package` docblock tags. Every single occurrence is followed by
 # '\', ';' or end-of-line, i.e. none of them is a longer identifier that merely starts with the
 # same characters (there is no `Codexpert\PluginTrackerSomething`). That is what makes the prefix
@@ -168,10 +168,34 @@ fi
 # the SDK version. See the "PREFIX STRATEGY" comment above for why derived-by-default.
 # ---------------------------------------------------------------------------------------------
 sanitize_for_namespace() {
-	# A PHP namespace segment may contain only [A-Za-z0-9_] and must not start with a digit.
-	# Version strings like "1.0.0" or "1.0.0-beta.1" contain '.' and '-', so collapse any run
-	# of non-word characters to a single underscore.
-	printf '%s' "$1" | sed -E 's/[^A-Za-z0-9]+/_/g'
+	# A PHP namespace segment may contain only [A-Za-z0-9_] and must not start with a digit, so
+	# every non-word run in a version string collapses to a single underscore.
+	#
+	# Collapsing alone is LOSSY, and lossy is not acceptable here. "1.0.0-hotfix" and
+	# "1.0.0+hotfix" are different releases carrying different code, and both collapse to
+	# "1_0_0_hotfix" -- so two distinct versions would share a namespace, and PHP would load
+	# whichever registered first. That is exactly the version-skew this whole script exists to
+	# prevent, reintroduced by the naming step.
+	#
+	# A short digest of the RAW version string is therefore appended. It is deterministic (so the
+	# build stays idempotent and two consumers on the same version still converge on one prefix)
+	# and it is injective in practice (so two different versions cannot collide).
+	local raw="$1"
+	local collapsed
+	local digest
+
+	collapsed="$(printf '%s' "${raw}" | sed -E 's/[^A-Za-z0-9]+/_/g')"
+
+	if command -v sha256sum >/dev/null 2>&1; then
+		digest="$(printf '%s' "${raw}" | sha256sum | cut -c1-6)"
+	elif command -v shasum >/dev/null 2>&1; then
+		digest="$(printf '%s' "${raw}" | shasum -a 256 | cut -c1-6)"
+	else
+		echo "error: need sha256sum or shasum to derive a collision-free namespace prefix" >&2
+		exit 1
+	fi
+
+	printf '%s_%s' "${collapsed}" "${digest}"
 }
 
 PREFIX="${1:-}"
@@ -313,6 +337,19 @@ sed -i \
 # Emit composer.json -- secondary path, for consumers who do use Composer (e.g. via a path
 # repository) and would rather `composer require` than hand-manage a `require`.
 # ---------------------------------------------------------------------------------------------
+# Translations ship with the artifact. I18n resolves languages/ relative to src/'s parent, so a
+# scoped copy without this directory would silently fall back to English -- and the consent prompt
+# is the one piece of UI a WordPress.org reviewer reads.
+if [ -d "${ROOT_DIR}/languages" ]; then
+	mkdir -p "${OUT_DIR}/languages"
+	# .pot for translators, .mo for runtime. .po sources are not shipped.
+	find "${ROOT_DIR}/languages" -maxdepth 1 -type f \( -name '*.pot' -o -name '*.mo' \) \
+		-exec cp {} "${OUT_DIR}/languages/" \;
+else
+	echo "error: ${ROOT_DIR}/languages is missing; refusing to build an untranslatable artifact" >&2
+	exit 1
+fi
+
 # The artifact is GPL-licensed code handed to a third party as a zip, so it has to carry its
 # license text. Without this the distributed copy asserts GPL-3.0-or-later in composer.json while
 # shipping no license at all.
@@ -436,6 +473,7 @@ $classes = array(
 	'Consent\\Gate',
 	'Consent\\Notice',
 	'Storage\\Queue',
+	'I18n',
 	'Storage\\Install',
 	'Http\\Transport',
 	'Cron\\Scheduler',
@@ -471,6 +509,18 @@ if ( $expected === $actual ) {
 	proof_ok( "Tracker::VERSION === '$expected'" );
 } else {
 	$fail = proof_fail( "Tracker::VERSION is '$actual', expected '$expected'" );
+}
+
+// 3b. I18n must resolve languages/ INSIDE the scoped copy. If build-dist.sh ever stops shipping
+//     languages/, or the copy is laid out differently, the SDK silently falls back to English --
+//     and the consent prompt is the one piece of UI a WordPress.org reviewer reads.
+$i18n_class = $prefix . '\\I18n';
+$lang_dir   = $i18n_class::languages_dir();
+
+if ( is_dir( $lang_dir ) && is_readable( $lang_dir . 'plugin-tracker-sdk.pot' ) ) {
+	proof_ok( 'I18n::languages_dir() resolves inside the scoped copy and the .pot is present' );
+} else {
+	$fail = proof_fail( "I18n::languages_dir() gave '$lang_dir' with no readable .pot" );
 }
 
 // 4. Construct one object from each sub-namespace. This resolves the cross-namespace `use`
