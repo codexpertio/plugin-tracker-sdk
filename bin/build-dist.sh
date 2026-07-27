@@ -474,6 +474,8 @@ $classes = array(
 	'Consent\\Notice',
 	'Storage\\Queue',
 	'I18n',
+	'Feedback\\Deactivation',
+	'Lifecycle',
 	'Storage\\Install',
 	'Http\\Transport',
 	'Cron\\Scheduler',
@@ -526,12 +528,20 @@ if ( is_dir( $lang_dir ) && is_readable( $lang_dir . 'plugin-tracker-sdk.pot' ) 
 // 4. Construct one object from each sub-namespace. This resolves the cross-namespace `use`
 //    imports through real constructor type hints, not just class_exists().
 $config_class = $prefix . '\\Config';
+// Config validates that `file` is a real MAIN plugin file, because the SDK registers the activation
+// and deactivation hooks itself and a wrong path leaves them silently never firing. This proof
+// therefore needs a file that actually carries a plugin header -- this script does not.
+$fake_plugin = tempnam( sys_get_temp_dir(), 'cx-proof-plugin-' ) . '.php';
+file_put_contents( $fake_plugin, "<?php\n/**\n * Plugin Name: Scoped Load Proof\n */\n" );
+
 $config       = new $config_class(
 	array(
 		'project'  => 'pt_proj_loadproof',
 		'plugin'   => 'scoped-load-proof',
 		'version'  => '1.0.0',
-		'file'     => __FILE__,
+		// 32 hex characters, matching Config::HASH_PATTERN.
+		'hash'     => 'abcdef0123456789abcdef0123456789',
+		'file'     => $fake_plugin,
 		'enabled'  => true,
 		'endpoint' => 'https://ingest.example.test/wp-json/plugin-tracker/v1',
 	)
@@ -573,6 +583,8 @@ if ( $event_class::is_allowed( 'install' ) && ! $event_class::is_allowed( 'not-a
 } else {
 	$fail = proof_fail( $event_class . '::is_allowed() misbehaved after scoping' );
 }
+
+@unlink( $fake_plugin );
 
 exit( $fail ? 1 : 0 );
 PROOFEOF

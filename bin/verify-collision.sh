@@ -90,6 +90,12 @@ function wp_schedule_single_event( \$t, \$h ) { \$GLOBALS['crons'][ \$h ] = \$t;
 function wp_clear_scheduled_hook( \$h ) { unset( \$GLOBALS['crons'][ \$h ] ); return true; }
 function wp_rand( \$lo = 0, \$hi = 1 ) { return \$lo; }
 function wp_doing_cron() { return false; }
+// Tracker::hook() now registers the consumer's activation and deactivation hooks itself, so the
+// harness has to provide these or init() fatals.
+function register_activation_hook( \$f, \$c ) { return true; }
+function register_deactivation_hook( \$f, \$c ) { return true; }
+function plugin_basename( \$f ) { return basename( dirname( \$f ) ) . '/' . basename( \$f ); }
+function did_action( \$h ) { return 0; }
 
 require '${DIST_A}/autoload.php';
 require '${DIST_B}/autoload.php';
@@ -115,8 +121,17 @@ check( 'v2-only method exists on consumer B', method_exists( \$cb, 'only_in_v2' 
 check( 'v2-only method absent on consumer A', ! method_exists( \$ca, 'only_in_v2' ) );
 
 // 4. State isolation, with two consumers under two different plugin slugs.
-\$ta = \$ca::init( array( 'project' => 'pt_proj_aaa111', 'plugin' => 'consumer-a', 'version' => '1.0.0', 'enabled' => true ) );
-\$tb = \$cb::init( array( 'project' => 'pt_proj_bbb222', 'plugin' => 'consumer-b', 'version' => '3.2.1', 'enabled' => true ) );
+// Config requires a hash and a real MAIN plugin file, so each simulated consumer gets its own
+// throwaway file carrying a plugin header -- which also mirrors reality, where two consumers are two
+// separate plugins with two separate main files.
+function fake_plugin( \$slug ) {
+	\$f = sys_get_temp_dir() . '/cx-' . \$slug . '.php';
+	file_put_contents( \$f, "<?php\n/**\n * Plugin Name: " . \$slug . "\n */\n" );
+	return \$f;
+}
+
+\$ta = \$ca::init( array( 'hash' => 'aaaa1111aaaa1111aaaa1111aaaa1111', 'plugin' => 'consumer-a', 'version' => '1.0.0', 'file' => fake_plugin( 'consumer-a' ), 'enabled' => true ) );
+\$tb = \$cb::init( array( 'hash' => 'bbbb2222bbbb2222bbbb2222bbbb2222', 'plugin' => 'consumer-b', 'version' => '3.2.1', 'file' => fake_plugin( 'consumer-b' ), 'enabled' => true ) );
 check( 'both trackers initialise', \$ta && \$tb );
 
 \$ta->consent()->opt_in();
