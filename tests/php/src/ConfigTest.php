@@ -120,4 +120,49 @@ class ConfigTest extends PluginTrackerTestCase {
 
 		$this->assertFalse( $config->is_valid() );
 	}
+
+	/**
+	 * The consent prompt is the one piece of UI a WordPress.org reviewer reads, so it must not show
+	 * a kebab-case slug. An explicit name wins; absent one, the slug is prettified rather than shown
+	 * raw, so a consumer who passes nothing still gets something presentable.
+	 */
+	public function test_name_prefers_an_explicit_value_and_otherwise_prettifies_the_slug() {
+		$explicit = new Config(
+			array(
+				'project' => 'pt_proj_abc123',
+				'plugin'  => 'tracker-sdk-example',
+				'name'    => 'Tracker SDK Example',
+				'version' => '1.0.0',
+			)
+		);
+		$this->assertSame( 'Tracker SDK Example', $explicit->name() );
+
+		$implicit = new Config(
+			array(
+				'project' => 'pt_proj_abc123',
+				'plugin'  => 'tracker-sdk-example',
+				'version' => '1.0.0',
+			)
+		);
+		$this->assertSame( 'Tracker Sdk Example', $implicit->name() );
+		$this->assertNotSame( $implicit->plugin(), $implicit->name(), 'the raw slug must never be the display name' );
+	}
+
+	/**
+	 * name() is display only. Every identifier keys off plugin(), so changing the display name must
+	 * never orphan a site's stored options or its scheduled flush.
+	 */
+	public function test_the_display_name_does_not_affect_any_identifier() {
+		$args = array(
+			'project' => 'pt_proj_abc123',
+			'plugin'  => 'my-plugin',
+			'version' => '1.0.0',
+		);
+
+		$without = new Config( $args );
+		$with    = new Config( array_merge( $args, array( 'name' => 'Something Else Entirely' ) ) );
+
+		$this->assertSame( $without->option( 'queue' ), $with->option( 'queue' ) );
+		$this->assertSame( $without->plugin(), $with->plugin() );
+	}
 }

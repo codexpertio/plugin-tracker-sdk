@@ -137,7 +137,7 @@ class Notice {
 		?>
 		<div class="notice notice-info">
 			<p>
-				<strong><?php echo esc_html( $this->config->plugin() ); ?></strong>
+				<strong><?php echo esc_html( $this->config->name() ); ?></strong>
 				<?php echo esc_html( (string) $text['intro'] ); ?>
 			</p>
 			<p>
@@ -188,7 +188,7 @@ class Notice {
 		printf(
 			'<div class="notice notice-%1$s"><p><strong>%2$s</strong> %3$s</p></div>',
 			esc_attr( $level ),
-			esc_html( $this->config->plugin() ),
+			esc_html( $this->config->name() ),
 			esc_html( (string) $notice['message'] )
 		);
 	}

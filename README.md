@@ -30,7 +30,8 @@ use Codexpert\PluginTracker\Event;
 add_action( 'plugins_loaded', function () {
     $tracker = Tracker::init( array(
         'project' => 'pt_proj_1a2b3c',   // public, non-secret; issued by the dashboard
-        'plugin'  => 'my-plugin',
+        'plugin'  => 'my-plugin',        // slug: keys options, cron hooks, nonces
+        'name'    => 'My Plugin',        // human-readable: what the consent prompt shows
         'version' => MY_PLUGIN_VERSION,
         'enabled' => true,               // consent gate 1: you, the author, enable it
     ) );
@@ -59,6 +60,13 @@ Plus a site-level kill switch (`CX_TRACKER_DISABLE`) and a final `cx_tracker_con
 
 With no consent, `track()` does not even write to the local queue. Buffering "in case consent
 arrives later" would mean holding data the administrator never agreed to us holding.
+
+Pass `name`. It is what the consent prompt shows a site administrator, and the prompt is the one
+piece of UI a WordPress.org reviewer reads — "my-plugin can send anonymous usage data" reads like a
+bug. Omit it and the SDK prettifies the slug, which is presentable but never quite right: no
+transformation turns `wp-seo-tools` into "WP SEO Tools". `plugin` remains the identifier behind every
+option key, cron hook and nonce, so the display name can change freely without orphaning stored
+state.
 
 Full detail: [`docs/CONSENT.md`](docs/CONSENT.md).
 

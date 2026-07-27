@@ -31,6 +31,13 @@ class Config {
 	private $plugin = '';
 
 	/**
+	 * Human-readable plugin name, for display to a site administrator.
+	 *
+	 * @var string
+	 */
+	private $name = '';
+
+	/**
 	 * The consumer's own plugin version.
 	 *
 	 * @var string
@@ -81,6 +88,7 @@ class Config {
 		$this->project = isset( $args['project'] ) && is_string( $args['project'] ) ? $args['project'] : '';
 		$this->plugin  = isset( $args['plugin'] ) && is_string( $args['plugin'] ) ? $args['plugin'] : '';
 		$this->version = isset( $args['version'] ) && is_string( $args['version'] ) ? $args['version'] : '';
+		$this->name    = isset( $args['name'] ) && is_string( $args['name'] ) ? trim( $args['name'] ) : '';
 		$this->enabled = ! empty( $args['enabled'] );
 
 		if ( isset( $args['endpoint'] ) && is_string( $args['endpoint'] ) && '' !== $args['endpoint'] ) {
@@ -178,6 +186,29 @@ class Config {
 	 */
 	public function plugin() {
 		return $this->plugin;
+	}
+
+	/**
+	 * Human-readable plugin name, for anything an administrator reads.
+	 *
+	 * Falls back to a prettified slug rather than the raw slug. The consent prompt is the one piece
+	 * of UI a WordPress.org reviewer reads, and showing "my-cool-plugin" there looks like a bug --
+	 * but requiring a `name` argument would break every existing caller, so the fallback improves
+	 * them without asking anything. Consumers should still pass `name` explicitly: no amount of
+	 * prettifying turns "wp-seo-tools" into "WP SEO Tools".
+	 *
+	 * Display only. Identifiers -- option keys, cron hooks, nonce actions -- all key off plugin()
+	 * so that renaming the display name can never orphan a site's stored state.
+	 *
+	 * @return string
+	 */
+	public function name() {
+
+		if ( '' !== $this->name ) {
+			return $this->name;
+		}
+
+		return ucwords( str_replace( array( '-', '_' ), ' ', $this->plugin() ) );
 	}
 
 	/**

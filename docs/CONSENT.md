@@ -18,6 +18,7 @@ The plugin author passes `enabled` in the array given to `Tracker::init()`:
 Tracker::init( array(
 	'project' => 'pt_proj_1a2b3c',
 	'plugin'  => 'my-plugin',
+	'name'    => 'My Plugin',   // shown in the prompt; omit and the slug is prettified
 	'version' => '2.4.1',
 	'enabled' => true, // Gate 1
 ) );
