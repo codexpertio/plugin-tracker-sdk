@@ -7,7 +7,7 @@ msgstr ""
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"POT-Creation-Date: 2026-07-27T08:10:09+00:00\n"
+"POT-Creation-Date: 2026-07-27T10:36:51+00:00\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "X-Generator: WP-CLI 2.12.0\n"
 
@@ -35,6 +35,163 @@ msgstr ""
 msgid "No thanks"
 msgstr ""
 
-#: src/Tracker.php:608
+#: src/Feedback/Deactivation.php:458
+#: src/Tracker.php:630
 msgid "You are not allowed to do that."
+msgstr ""
+
+#: src/Feedback/Deactivation.php:645
+msgid "Before you go, what went wrong?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:646
+msgid "This goes straight to the developers, and it is the only thing that tells them what to fix. Answering is optional."
+msgstr ""
+
+#: src/Feedback/Deactivation.php:647
+msgid "Why are you deactivating?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:648
+msgid "Anything else you want to tell them? (optional)"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:649
+msgid "Please do not include passwords, licence keys, or anyone's personal details."
+msgstr ""
+
+#: src/Feedback/Deactivation.php:650
+msgid "This is sent to the plugin's developer, not to WordPress.org, and only because you pressed the button."
+msgstr ""
+
+#: src/Feedback/Deactivation.php:651
+msgid "Click here to see exactly what is sent"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:652
+msgid "Pressing the button below sends exactly this, and nothing else:"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:653
+msgid "Your comment, exactly as you typed it"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:654
+msgid "It does not send your email address, your username, your other plugins, or the anonymous usage-tracking ID. It is sent once, because you pressed the button, and it is separate from usage tracking, which is unaffected by this and stays as you set it."
+msgstr ""
+
+#: src/Feedback/Deactivation.php:655
+msgid "Send feedback &amp; deactivate"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:656
+msgid "Skip &amp; Deactivate"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:657
+msgid "Cancel, keep it active"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:658
+msgid "Close"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:659
+msgid "Sending&hellip;"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:660
+msgid "Site address"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:661
+msgid "Plugin and version"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:662
+msgid "WordPress version"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:663
+msgid "PHP version"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:664
+msgid "Site language"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:665
+msgid "Multisite"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:666
+msgid "Plugin identifier"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:667
+msgid "The reason you pick above"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:668
+msgid "Yes"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:669
+msgid "No"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:706
+msgid "Anything the developer should know before you come back?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:707
+msgid "What changed?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:708
+msgid "Which plugin did you move to, and what does it do better?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:709
+msgid "What broke? This is the single most useful thing you can tell the developer."
+msgstr ""
+
+#: src/Feedback/Deactivation.php:710
+msgid "What were you trying to do?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:711
+msgid "Which feature were you looking for?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:712
+msgid "What happened?"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:742
+msgid "It is only temporary — I will turn it back on"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:743
+msgid "I no longer need it"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:744
+msgid "I found a better plugin"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:745
+msgid "It broke my site"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:746
+msgid "I could not work out how to use it"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:747
+msgid "It is missing a feature I need"
+msgstr ""
+
+#: src/Feedback/Deactivation.php:748
+msgid "Something else"
 msgstr ""

@@ -128,4 +128,23 @@ class ContractTest extends PluginTrackerTestCase {
 	public function test_queue_max_queue_bytes_is_frozen_at_256kb() {
 		$this->assertSame( 262144, Queue::MAX_QUEUE_BYTES );
 	}
+
+	/**
+	 * The envelope identifies the reporting plugin by `hash`, the value the dashboard-issued snippet
+	 * carries. `project` predates it and is still accepted by Config for older integrations, but it
+	 * is NOT what goes on the wire -- nothing asserted that until now, so the switch from `project`
+	 * to `hash` passed the whole suite silently.
+	 */
+	public function test_the_envelope_identifies_the_plugin_by_hash_not_project() {
+		$tracker    = \Codexpert\PluginTracker\Tracker::init(
+			$this->config_args( array( 'enabled' => true ) )
+		);
+		$reflection = new \ReflectionMethod( $tracker, 'envelope' );
+		$reflection->setAccessible( true );
+		$envelope = $reflection->invoke( $tracker, array() );
+
+		$this->assertArrayHasKey( 'hash', $envelope, 'the envelope must carry the snippet hash' );
+		$this->assertSame( 'a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4', $envelope['hash'] );
+		$this->assertArrayNotHasKey( 'project', $envelope, 'project is legacy and must not be transmitted' );
+	}
 }

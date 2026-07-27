@@ -11,6 +11,7 @@ use Codexpert\PluginTracker\Consent\Gate;
 use Codexpert\PluginTracker\Consent\Notice;
 use Codexpert\PluginTracker\Cron\Scheduler;
 use Codexpert\PluginTracker\Http\Transport;
+use Codexpert\PluginTracker\Feedback\Deactivation;
 use Codexpert\PluginTracker\Privacy\Personal_Data;
 use Codexpert\PluginTracker\Storage\Install;
 use Codexpert\PluginTracker\Storage\Queue;
@@ -121,6 +122,13 @@ class Tracker {
 	private $transport;
 
 	/**
+	 * Lifecycle listeners: activation, deactivation, init.
+	 *
+	 * @var Lifecycle
+	 */
+	private $lifecycle;
+
+	/**
 	 * Constructor.
 	 *
 	 * @param Config $config Validated config.
@@ -132,6 +140,7 @@ class Tracker {
 		$this->queue     = new Queue( $config );
 		$this->scheduler = new Scheduler( $config );
 		$this->transport = new Transport( $config );
+		$this->lifecycle = new Lifecycle( $config, $this );
 	}
 
 	/**
@@ -209,7 +218,16 @@ class Tracker {
 			$this->scheduler->ensure_scheduled();
 		}
 
+		// The SDK registers the consumer's activation, deactivation and init listeners itself. That
+		// is the point of the generated snippet: a developer pastes one block into their main plugin
+		// file and writes no hooks and no track() calls of their own.
+		$this->lifecycle->register();
+
 		Personal_Data::register( $this->config, $this->consent, $this->install );
+
+		// The deactivation-feedback modal. Registers its own screen-scoped render hook and submit
+		// handler; see docs/FEEDBACK.md for the payload and why it is not behind the telemetry gate.
+		Deactivation::register( $this->config, $this->consent );
 	}
 
 	/**
@@ -539,7 +557,9 @@ class Tracker {
 		return array(
 			'schema'  => Event::SCHEMA,
 			'sdk'     => self::VERSION,
-			'project' => $this->config->project(),
+			// The dashboard-issued snippet identifier. `project` is still accepted by Config for
+			// older integrations but `hash` is what the SDK reports under.
+			'hash'    => $this->config->hash(),
 			'install' => $this->install->id(),
 			'sent_at' => time(),
 			'events'  => $events,
@@ -557,7 +577,9 @@ class Tracker {
 			array(
 				'schema'  => Event::SCHEMA,
 				'sdk'     => self::VERSION,
-				'project' => $this->config->project(),
+				// The dashboard-issued snippet identifier. `project` is still accepted by Config for
+				// older integrations but `hash` is what the SDK reports under.
+				'hash'    => $this->config->hash(),
 				'install' => $this->install->id(),
 				'plugin'  => $this->config->plugin(),
 				'consent' => $this->consent->record(),
@@ -642,6 +664,20 @@ class Tracker {
 	 *
 	 * @return Gate
 	 */
+	/**
+	 * Lifecycle listeners.
+	 *
+	 * @return Lifecycle
+	 */
+	public function lifecycle() {
+		return $this->lifecycle;
+	}
+
+	/**
+	 * Consent gate, for consumers that want to render their own UI.
+	 *
+	 * @return Gate
+	 */
 	public function consent() {
 		return $this->consent;
 	}
@@ -661,5 +697,6 @@ class Tracker {
 		delete_option( $this->config->option( 'interval' ) );
 		delete_option( $this->config->option( 'attempts' ) );
 		delete_option( $this->config->option( 'dropped' ) );
+		$this->lifecycle->forget();
 	}
 }

@@ -130,21 +130,21 @@ class ConfigTest extends PluginTrackerTestCase {
 		$explicit = new Config(
 			array(
 				'project' => 'pt_proj_abc123',
-				'plugin'  => 'tracker-sdk-example',
-				'name'    => 'Tracker SDK Example',
+				'plugin'  => 'plugin-tracker-sdk-example',
+				'name'    => 'Plugin Tracker SDK Example',
 				'version' => '1.0.0',
 			)
 		);
-		$this->assertSame( 'Tracker SDK Example', $explicit->name() );
+		$this->assertSame( 'Plugin Tracker SDK Example', $explicit->name() );
 
 		$implicit = new Config(
 			array(
 				'project' => 'pt_proj_abc123',
-				'plugin'  => 'tracker-sdk-example',
+				'plugin'  => 'plugin-tracker-sdk-example',
 				'version' => '1.0.0',
 			)
 		);
-		$this->assertSame( 'Tracker Sdk Example', $implicit->name() );
+		$this->assertSame( 'Plugin Tracker Sdk Example', $implicit->name() );
 		$this->assertNotSame( $implicit->plugin(), $implicit->name(), 'the raw slug must never be the display name' );
 	}
 

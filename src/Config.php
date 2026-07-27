@@ -31,6 +31,25 @@ class Config {
 	private $plugin = '';
 
 	/**
+	 * Dashboard-issued identifier carried by the generated snippet.
+	 *
+	 * @var string
+	 */
+	private $hash = '';
+
+	/**
+	 * Absolute path to the consumer's MAIN plugin file.
+	 *
+	 * Required, because the SDK registers the activation and deactivation hooks itself and
+	 * register_activation_hook() keys on plugin_basename( $file ). Passing anything other than the
+	 * main plugin file -- an include, a class file -- produces a basename WordPress never fires, so
+	 * the hooks silently never run.
+	 *
+	 * @var string
+	 */
+	private $file = '';
+
+	/**
 	 * Human-readable plugin name, for display to a site administrator.
 	 *
 	 * @var string
@@ -74,6 +93,16 @@ class Config {
 	const PROJECT_PATTERN = '/^pt_proj_[a-z0-9]{6,64}\z/';
 
 	/**
+	 * The dashboard-issued hash: hex, long enough to be unguessable as an identifier.
+	 *
+	 * Deliberately NOT a secret. It ships inside the consumer's plugin, and if that plugin is
+	 * listed on WordPress.org the zip is published, so anything in the snippet is public by
+	 * construction. The hash says WHICH plugin is reporting; the per-install token obtained at
+	 * registration is what authenticates.
+	 */
+	const HASH_PATTERN = '/^[a-f0-9]{32,64}\z/';
+
+	/**
 	 * Consumer plugin slugs follow the WordPress.org slug shape.
 	 */
 	const SLUG_PATTERN = '/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]\z/';
@@ -89,6 +118,8 @@ class Config {
 		$this->plugin  = isset( $args['plugin'] ) && is_string( $args['plugin'] ) ? $args['plugin'] : '';
 		$this->version = isset( $args['version'] ) && is_string( $args['version'] ) ? $args['version'] : '';
 		$this->name    = isset( $args['name'] ) && is_string( $args['name'] ) ? trim( $args['name'] ) : '';
+		$this->hash    = isset( $args['hash'] ) && is_string( $args['hash'] ) ? trim( $args['hash'] ) : '';
+		$this->file    = isset( $args['file'] ) && is_string( $args['file'] ) ? $args['file'] : '';
 		$this->enabled = ! empty( $args['enabled'] );
 
 		if ( isset( $args['endpoint'] ) && is_string( $args['endpoint'] ) && '' !== $args['endpoint'] ) {
@@ -105,9 +136,13 @@ class Config {
 	 */
 	private function validate() {
 
-		if ( 1 !== preg_match( self::PROJECT_PATTERN, $this->project ) ) {
-			$this->errors[] = 'project must match pt_proj_<alnum>; it is public and non-secret. '
-				. 'Never put your project SECRET here -- it would be published inside your plugin.';
+		// `project` is OPTIONAL. The dashboard-issued snippet carries `hash`, which is the
+		// identifier the SDK reports under; `project` predates it and is still accepted so an
+		// existing integration keeps working, but it is no longer required. Validated only when
+		// supplied, so a typo is still caught rather than silently transmitted.
+		if ( '' !== $this->project && 1 !== preg_match( self::PROJECT_PATTERN, $this->project ) ) {
+			$this->errors[] = 'project, when supplied, must match pt_proj_<alnum>; it is public and '
+				. 'non-secret. Never put a secret here -- it would be published inside your plugin.';
 		}
 
 		if ( 1 !== preg_match( self::SLUG_PATTERN, $this->plugin ) ) {
@@ -116,6 +151,23 @@ class Config {
 
 		if ( '' === $this->version ) {
 			$this->errors[] = 'version is required';
+		}
+
+		if ( 1 !== preg_match( self::HASH_PATTERN, $this->hash ) ) {
+			$this->errors[] = 'hash is required and must match ' . self::HASH_PATTERN
+				. '. Copy it from the snippet the dashboard generated; it is a public identifier, '
+				. 'not a secret, and must never be a value the dashboard told you to keep private.';
+		}
+
+		// Required, and required to be the MAIN plugin file. The SDK registers the activation and
+		// deactivation hooks itself, and register_activation_hook() keys on
+		// plugin_basename( $file ) -- so a wrong path here means those hooks silently never fire,
+		// which is the worst kind of failure: nothing errors, data just never arrives.
+		if ( '' === $this->file ) {
+			$this->errors[] = 'file is required; pass __FILE__ from your main plugin file';
+		} elseif ( ! $this->looks_like_plugin_file() ) {
+			$this->errors[] = 'file must be the main plugin file (pass __FILE__ from the file that '
+				. 'carries your plugin header), not an include or a class file';
 		}
 
 		// https is required. Telemetry over http would expose the install token in transit, and
@@ -209,6 +261,68 @@ class Config {
 		}
 
 		return ucwords( str_replace( array( '-', '_' ), ' ', $this->plugin() ) );
+	}
+
+	/**
+	 * Dashboard-issued plugin hash from the snippet.
+	 *
+	 * @return string
+	 */
+	public function hash() {
+		return $this->hash;
+	}
+
+	/**
+	 * Absolute path to the consumer's main plugin file.
+	 *
+	 * @return string
+	 */
+	public function file() {
+		return $this->file;
+	}
+
+	/**
+	 * Plugin basename, as WordPress keys activation hooks and the plugins-list row.
+	 *
+	 * @return string
+	 */
+	public function basename() {
+
+		if ( '' === $this->file ) {
+			return '';
+		}
+
+		if ( function_exists( 'plugin_basename' ) ) {
+			return plugin_basename( $this->file );
+		}
+
+		// Fallback for a non-WordPress context (tests): last two path segments.
+		$parts = explode( '/', str_replace( '\\', '/', $this->file ) );
+		$parts = array_slice( $parts, -2 );
+
+		return implode( '/', $parts );
+	}
+
+	/**
+	 * Does the given file plausibly carry a plugin header?
+	 *
+	 * A heuristic, not a guarantee -- but it catches the common mistake of passing __FILE__ from a
+	 * class file, which would leave the activation hooks permanently silent.
+	 *
+	 * @return bool
+	 */
+	private function looks_like_plugin_file() {
+
+		if ( ! is_readable( $this->file ) ) {
+			// Cannot check. Do not fail construction on this -- an unreadable path during a test or
+			// an odd filesystem should not disable a consumer's telemetry.
+			return true;
+		}
+
+		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading the first 8KB of a LOCAL plugin file to check for a plugin header; wp_remote_get() is for URLs and WP_Filesystem is not loaded this early.
+		$head = (string) file_get_contents( $this->file, false, null, 0, 8192 );
+
+		return 1 === preg_match( '/^[\s\*\/#@]*Plugin Name\s*:/mi', $head );
 	}
 
 	/**

@@ -61,6 +61,15 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 		// patches a stubbed function process-wide, so once I18nTest stubs them, every other test that
 		// initialises a Tracker would otherwise fail with MissingFunctionExpectations. Same reason the
 		// wp_rand() and apply_filters() defaults exist.
+		// Tracker::common_fields() and Lifecycle::environment() guard these with function_exists(),
+		// so nothing stubbed them and the guards fell through. The moment any single test stubs one,
+		// Brain Monkey defines it process-wide, the guard starts passing everywhere, and every other
+		// test reaching common_fields() fails with MissingFunctionExpectations. Same hazard as the
+		// wp_rand() and apply_filters() defaults.
+		Functions\when( 'get_bloginfo' )->justReturn( '6.5.2' );
+		Functions\when( 'get_locale' )->justReturn( 'en_US' );
+		Functions\when( 'is_multisite' )->justReturn( false );
+
 		Functions\when( 'determine_locale' )->justReturn( 'en_US' );
 		Functions\when( 'is_textdomain_loaded' )->justReturn( false );
 		Functions\when( 'load_textdomain' )->justReturn( false );
@@ -146,6 +155,11 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 				'project'  => 'pt_proj_abc123',
 				'plugin'   => 'my-plugin',
 				'version'  => '1.0.0',
+				// Config now requires both: `hash` is the dashboard-issued snippet identifier, and
+				// `file` is the main plugin file the SDK needs in order to register the activation
+				// and deactivation hooks itself.
+				'hash'     => 'a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4',
+				'file'     => '/wp-content/plugins/my-plugin/my-plugin.php',
 				'enabled'  => false,
 				'endpoint' => 'https://tracker.example.test/wp-json/plugin-tracker/v1',
 			),
@@ -267,6 +281,22 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 
 	protected function stored( Config $config, $suffix ) {
 		return PluginTracker_Test_Option_Store::get( $config->option( $suffix ) );
+	}
+
+	/**
+	 * Seed an arbitrary per-consumer option value directly into the in-memory store, bypassing
+	 * whatever component normally writes it -- the write counterpart to stored(). Used to put a
+	 * component into an arbitrary prior state (e.g. Lifecycle's stored `env` snapshot, or a
+	 * Feedback\Deactivation-stashed `reason`) without driving the real code path that would
+	 * normally produce it.
+	 *
+	 * @param Config $config Config.
+	 * @param string $suffix Option suffix, as passed to Config::option().
+	 * @param mixed  $value  Value to store.
+	 * @return void
+	 */
+	protected function seed_stored( Config $config, $suffix, $value ) {
+		PluginTracker_Test_Option_Store::update( $config->option( $suffix ), $value );
 	}
 
 	/**
