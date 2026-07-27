@@ -32,6 +32,7 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 
 		$this->stub_options();
 		$this->stub_cron();
+		$this->stub_filters();
 	}
 
 	protected function tearDown(): void {
@@ -56,6 +57,14 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 		// leaving it to Brain Monkey's own built-in default (same effect, made explicit).
 		Functions\when( 'wp_json_encode' )->alias( 'json_encode' );
 
+		// Tracker::hook() calls I18n::load() on every init, so these need defaults. Brain Monkey
+		// patches a stubbed function process-wide, so once I18nTest stubs them, every other test that
+		// initialises a Tracker would otherwise fail with MissingFunctionExpectations. Same reason the
+		// wp_rand() and apply_filters() defaults exist.
+		Functions\when( 'determine_locale' )->justReturn( 'en_US' );
+		Functions\when( 'is_textdomain_loaded' )->justReturn( false );
+		Functions\when( 'load_textdomain' )->justReturn( false );
+
 		// Default to absent. Transport reads the Retry-After header on every response, so an
 		// unstubbed default here fails every transport test rather than only the rate-limit ones.
 		// Individual tests override this with Functions\when(...)->justReturn( '120' ).
@@ -67,12 +76,20 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 	 * calls it on every init). Stub the WP-Cron primitives so that path doesn't fatal on an
 	 * undefined function; no test in this suite asserts scheduling behaviour itself.
 	 *
+	 * Also defaults wp_doing_cron() to true. Tracker::flush() now refuses to run at all unless
+	 * Tracker::is_background_request() is satisfied (wp_doing_cron() or WP_CLI) or $force is
+	 * passed -- see Tracker::flush(). WP-Cron is the SDK's own genuine, non-test caller of
+	 * flush(), so defaulting to "yes, this is cron" here is the honest default for a harness that
+	 * never runs a real cron job; a test that wants to exercise the guard itself overrides this to
+	 * false (and leaves WP_CLI undefined).
+	 *
 	 * @return void
 	 */
 	private function stub_cron() {
 		Functions\when( 'wp_next_scheduled' )->justReturn( false );
 		Functions\when( 'wp_schedule_single_event' )->justReturn( true );
 		Functions\when( 'wp_clear_scheduled_hook' )->justReturn( true );
+		Functions\when( 'wp_doing_cron' )->justReturn( true );
 
 		// Cron\Scheduler::jitter() and Tracker::backoff() both consult wp_rand(). Brain Monkey
 		// patches it process-wide the moment ANY test (e.g. Cron/SchedulerTest.php's jitter tests)
@@ -90,6 +107,33 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 	}
 
 	/**
+	 * apply_filters() defaulted to a plain pass-through (returns $value unchanged, ignoring the
+	 * hook name and any extra args) -- the same "no filters registered" behaviour a real
+	 * WordPress site has by default.
+	 *
+	 * Consent\Gate::granted() and Consent\Notice::strings() both guard their apply_filters() call
+	 * with function_exists( 'apply_filters' ), specifically so this SDK behaves sanely when WP
+	 * (or, here, Brain Monkey) hasn't defined it at all. But once ANY test in this process stubs
+	 * apply_filters() -- as a Consent\NoticeTest filter test does -- Brain Monkey/Patchwork defines
+	 * it process-wide, so function_exists( 'apply_filters' ) becomes true for every test that runs
+	 * after, including unrelated Gate::granted() calls elsewhere in this suite. Exactly the same
+	 * hazard the wp_rand() comment above describes, and the same fix: default it here, for every
+	 * test, to the behaviour "no filter is registered" (pass-through), so nothing breaks unless a
+	 * test deliberately overrides it. A test that DOES care overrides this with its own
+	 * Functions\when( 'apply_filters' ) scoped to the hook it cares about.
+	 *
+	 * @return void
+	 */
+	private function stub_filters() {
+		Functions\when( 'apply_filters' )->alias(
+			function ( $hook, $value ) {
+				unset( $hook );
+				return $value;
+			}
+		);
+	}
+
+	/**
 	 * Raw Tracker::init()/Config args, valid by default. Endpoint is https, so validity does not
 	 * accidentally hinge on the localhost/.test carve-out.
 	 *
@@ -102,7 +146,6 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 				'project'  => 'pt_proj_abc123',
 				'plugin'   => 'my-plugin',
 				'version'  => '1.0.0',
-				'file'     => '/tmp/my-plugin/my-plugin.php',
 				'enabled'  => false,
 				'endpoint' => 'https://tracker.example.test/wp-json/plugin-tracker/v1',
 			),

@@ -14,6 +14,7 @@ use Codexpert\PluginTracker\Config;
 use Codexpert\PluginTracker\Consent\Gate;
 use Codexpert\PluginTracker\Cron\Scheduler;
 use Codexpert\PluginTracker\Http\Transport;
+use Codexpert\PluginTracker\Storage\Install;
 use Codexpert\PluginTracker\Tracker;
 
 /**
@@ -230,6 +231,68 @@ class TrackerTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * handle_consent()'s explicit opt-out path (choice=out) forgets the install salt too, not just
+	 * the token -- see the comment above Storage\Install::forget() in Tracker::handle_consent().
+	 * Proven here by comparing the install id before and after opting out: since the id is an HMAC
+	 * under that salt (Storage\Install::id()), deleting the salt must change the id.
+	 *
+	 * wp_safe_redirect() is stubbed to throw a catchable exception, the same substitution the two
+	 * tests above make for wp_die()/check_admin_referer() -- it stands in for the real exit() that
+	 * follows it in Tracker::handle_consent(), which would otherwise terminate the test process.
+	 * Every state mutation under test happens before that call, so the exception is caught and
+	 * asserted on rather than treated as a failure.
+	 *
+	 * Deliberate, documented consequence -- not a bug this test is guarding against, but the
+	 * accepted trade-off: opting out and back in yields a NEW install id, so a site that cycles
+	 * consent counts more than once in install-count metrics. Accepted because leaving a live,
+	 * correlatable identifier on a site that explicitly said no is the worse trade.
+	 */
+	public function test_handle_consent_opt_out_forgets_the_install_salt_and_changes_the_install_id() {
+		$config = $this->make_config( array( 'enabled' => true ) );
+		$this->seed_consent( $config, Gate::POLICY, true );
+		$tracker = Tracker::init( $this->config_args( array( 'enabled' => true ) ) );
+
+		Functions\when( 'home_url' )->justReturn( 'https://tracker-sdk-optout-test.example' );
+		$install = new Install( $config );
+		$before  = $install->id();
+
+		Functions\when( 'current_user_can' )->justReturn( true );
+		Functions\when( 'check_admin_referer' )->justReturn( true );
+		Functions\when( 'sanitize_key' )->alias(
+			function ( $value ) {
+				return $value;
+			}
+		);
+		Functions\when( 'wp_unslash' )->alias(
+			function ( $value ) {
+				return $value;
+			}
+		);
+		Functions\when( 'wp_get_referer' )->justReturn( '' );
+		Functions\when( 'admin_url' )->justReturn( 'https://tracker-sdk-optout-test.example/wp-admin/' );
+		Functions\when( 'wp_safe_redirect' )->alias(
+			function () {
+				throw new \RuntimeException( 'wp_safe_redirect called' );
+			}
+		);
+
+		$_POST['choice'] = 'out';
+
+		try {
+			$tracker->handle_consent();
+			$this->fail( 'handle_consent() must still reach its wp_safe_redirect()/exit tail' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( 'wp_safe_redirect called', $e->getMessage() );
+		} finally {
+			unset( $_POST['choice'] );
+		}
+
+		$after = $install->id();
+
+		$this->assertNotSame( $before, $after, 'opting out must forget the install salt, changing the derived install id' );
+	}
+
+	/**
 	 * A Tracker instance with both consent gates already passed and a token already stored, so
 	 * flush() goes straight into Transport::send() rather than also exercising register().
 	 *
@@ -246,6 +309,62 @@ class TrackerTest extends PluginTrackerTestCase {
 		$tracker = Tracker::init( $this->config_args( $overrides ) );
 
 		return array( $tracker, $config );
+	}
+
+	/**
+	 * flush() has to be public because it is an action callback, so a consumer could otherwise call
+	 * it directly from inside a page request -- which is exactly the blocking-HTTP-call-in-someone-
+	 * elses-page-load scenario Tracker::is_background_request() exists to prevent. With
+	 * wp_doing_cron() false and WP_CLI undefined (neither test double indicates a background
+	 * context), flush() must return before ever reaching Transport: zero HTTP requests, and the
+	 * queue left exactly as seeded -- not cleared, not sent, not touched at all.
+	 */
+	public function test_flush_makes_no_requests_and_leaves_the_queue_untouched_outside_a_background_request() {
+		list( $tracker, $config ) = $this->tracker_ready_to_send();
+		$this->seed_queue( $config, 3 );
+
+		Functions\when( 'wp_doing_cron' )->justReturn( false );
+
+		Functions\expect( 'wp_remote_post' )->never();
+
+		$tracker->flush();
+
+		$this->assertCount(
+			3,
+			$this->queue_for( $config )->all(),
+			'flush() must leave the queue exactly as seeded outside a background request'
+		);
+	}
+
+	/**
+	 * $force is the documented escape hatch from that same guard -- for tests, and for a consumer
+	 * who deliberately wants a synchronous flush. Same non-background setup as immediately above
+	 * (wp_doing_cron() false, WP_CLI undefined), but flush( true ) must bypass the guard and
+	 * actually proceed to send, proven here by the queue being cleared on a successful send.
+	 */
+	public function test_flush_sends_when_forced_even_outside_a_background_request() {
+		list( $tracker, $config ) = $this->tracker_ready_to_send();
+		$this->seed_queue( $config, 2 );
+
+		Functions\when( 'wp_doing_cron' )->justReturn( false );
+		$this->stub_remote_response(
+			200,
+			array(
+				'success' => true,
+				'data'    => array(
+					'accepted' => 2,
+					'rejected' => 0,
+				),
+			)
+		);
+
+		$tracker->flush( true );
+
+		$this->assertCount(
+			0,
+			$this->queue_for( $config )->all(),
+			'flush( true ) must bypass the background-request guard and actually send'
+		);
 	}
 
 	/**

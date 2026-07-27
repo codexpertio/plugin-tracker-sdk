@@ -1,0 +1,40 @@
+msgid ""
+msgstr ""
+"Project-Id-Version: \n"
+"Report-Msgid-Bugs-To: \n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2026-07-27T08:10:09+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.12.0\n"
+
+#: src/Consent/Notice.php:100
+msgid "can send anonymous usage data to help its developers decide what to build and which versions to support."
+msgstr ""
+
+#: src/Consent/Notice.php:101
+msgid "It would send: an anonymous install ID, the plugin version, your WordPress and PHP versions, your site language, whether this is a multisite, and which features are used."
+msgstr ""
+
+#: src/Consent/Notice.php:102
+msgid "It never sends your site address, email address, user accounts, or any content."
+msgstr ""
+
+#: src/Consent/Notice.php:103
+msgid "Nothing is sent unless you agree. You can change your mind at any time."
+msgstr ""
+
+#: src/Consent/Notice.php:104
+msgid "Allow"
+msgstr ""
+
+#: src/Consent/Notice.php:105
+msgid "No thanks"
+msgstr ""
+
+#: src/Tracker.php:608
+msgid "You are not allowed to do that."
+msgstr ""

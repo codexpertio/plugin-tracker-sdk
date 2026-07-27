@@ -74,36 +74,88 @@ class Notice {
 	}
 
 	/**
+	 * User-facing prompt copy, filterable so a consumer can localise it.
+	 *
+	 * The SDK ships and loads its OWN translations from its own languages/ directory (see I18n),
+	 * so these strings are already translated wherever a .mo exists for the site's locale.
+	 * `load_plugin_textdomain()` cannot be used for that -- it resolves against the consumer's
+	 * plugin directory -- so I18n calls `load_textdomain()` with an explicit path instead.
+	 *
+	 * This filter is the additional override, for a consumer who wants the prompt to match their
+	 * own product's wording rather than merely translate it:
+	 *
+	 *     add_filter( 'cx_tracker_notice_strings', function ( $s ) {
+	 *         $s['allow'] = __( 'Allow', 'my-plugin' );
+	 *         return $s;
+	 *     } );
+	 *
+	 * This matters beyond tidiness: the consent prompt is the one piece of UI a WordPress.org
+	 * reviewer reads, and it has to be readable in the site's language.
+	 *
+	 * @return array
+	 */
+	private function strings() {
+
+		$defaults = array(
+			'intro'    => __( 'can send anonymous usage data to help its developers decide what to build and which versions to support.', 'plugin-tracker-sdk' ),
+			'sends'    => __( 'It would send: an anonymous install ID, the plugin version, your WordPress and PHP versions, your site language, whether this is a multisite, and which features are used.', 'plugin-tracker-sdk' ),
+			'never'    => __( 'It never sends your site address, email address, user accounts, or any content.', 'plugin-tracker-sdk' ),
+			'optional' => __( 'Nothing is sent unless you agree. You can change your mind at any time.', 'plugin-tracker-sdk' ),
+			'allow'    => __( 'Allow', 'plugin-tracker-sdk' ),
+			'decline'  => __( 'No thanks', 'plugin-tracker-sdk' ),
+		);
+
+		if ( ! function_exists( 'apply_filters' ) ) {
+			return $defaults;
+		}
+
+		/**
+		 * Filter the consent prompt copy.
+		 *
+		 * @param array  $defaults Default English strings.
+		 * @param string $plugin   Consumer plugin slug, so one consumer's filter cannot affect another's.
+		 */
+		$filtered = apply_filters( 'cx_tracker_notice_strings', $defaults, $this->config->plugin() );
+
+		if ( ! is_array( $filtered ) ) {
+			return $defaults;
+		}
+
+		// Merged over the defaults so a partial filter cannot blank a string, and cast at the point
+		// of use below.
+		return array_merge( $defaults, $filtered );
+	}
+
+	/**
 	 * The opt-in prompt.
 	 *
 	 * @return void
 	 */
 	private function render_prompt() {
 		$action = admin_url( 'admin-post.php' );
+		$text   = $this->strings();
 		?>
 		<div class="notice notice-info">
 			<p>
 				<strong><?php echo esc_html( $this->config->plugin() ); ?></strong>
-				<?php esc_html_e( 'can send anonymous usage data to help its developers decide what to build and which versions to support.', 'plugin-tracker-sdk' ); ?>
+				<?php echo esc_html( (string) $text['intro'] ); ?>
 			</p>
 			<p>
-				<?php esc_html_e( 'It would send: an anonymous install ID, the plugin version, your WordPress and PHP versions, your site language, whether this is a multisite, and which features are used.', 'plugin-tracker-sdk' ); ?>
-				<strong><?php esc_html_e( 'It never sends your site address, email address, user accounts, or any content.', 'plugin-tracker-sdk' ); ?></strong>
+				<?php echo esc_html( (string) $text['sends'] ); ?>
+				<strong><?php echo esc_html( (string) $text['never'] ); ?></strong>
 			</p>
-			<p>
-				<?php esc_html_e( 'Nothing is sent unless you agree. You can change your mind at any time.', 'plugin-tracker-sdk' ); ?>
-			</p>
+			<p><?php echo esc_html( (string) $text['optional'] ); ?></p>
 			<form method="post" action="<?php echo esc_url( $action ); ?>" style="display:inline">
 				<?php wp_nonce_field( 'cx_tracker_consent_' . $this->config->plugin() ); ?>
 				<input type="hidden" name="action" value="cx_tracker_consent_<?php echo esc_attr( $this->config->plugin() ); ?>">
 				<input type="hidden" name="choice" value="in">
-				<?php submit_button( __( 'Allow', 'plugin-tracker-sdk' ), 'primary', 'submit', false ); ?>
+				<?php submit_button( (string) $text['allow'], 'primary', 'submit', false ); ?>
 			</form>
 			<form method="post" action="<?php echo esc_url( $action ); ?>" style="display:inline">
 				<?php wp_nonce_field( 'cx_tracker_consent_' . $this->config->plugin() ); ?>
 				<input type="hidden" name="action" value="cx_tracker_consent_<?php echo esc_attr( $this->config->plugin() ); ?>">
 				<input type="hidden" name="choice" value="out">
-				<?php submit_button( __( 'No thanks', 'plugin-tracker-sdk' ), 'secondary', 'submit', false ); ?>
+				<?php submit_button( (string) $text['decline'], 'secondary', 'submit', false ); ?>
 			</form>
 		</div>
 		<?php

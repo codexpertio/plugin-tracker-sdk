@@ -165,4 +165,129 @@ class NoticeTest extends PluginTrackerTestCase {
 
 		$this->assertStringContainsString( 'can send anonymous usage data', $output );
 	}
+
+	/**
+	 * The prompt copy is filterable (cx_tracker_notice_strings) so a consumer can localise it in
+	 * their own text domain -- see the docblock on Notice::strings(). With no filter registered
+	 * (PluginTrackerTestCase::stub_filters() defaults apply_filters() to a plain pass-through, the
+	 * same as a real site with nothing hooked to this filter), every default string must render.
+	 */
+	public function test_render_shows_every_default_string_when_no_filter_is_registered() {
+		$config  = $this->make_config( array( 'enabled' => true ) );
+		$consent = new Gate( $config );
+		$notice  = new Notice( $config, $consent );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+
+		ob_start();
+		$notice->render();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'can send anonymous usage data', $output, 'default intro string' );
+		$this->assertStringContainsString( 'anonymous install ID', $output, 'default sends string' );
+		$this->assertStringContainsString( 'It never sends your site address', $output, 'default never string' );
+		$this->assertStringContainsString( 'Nothing is sent unless you agree', $output, 'default optional string' );
+		$this->assertStringContainsString( '<button>Allow</button>', $output, 'default allow button label' );
+		$this->assertStringContainsString( '<button>No thanks</button>', $output, 'default decline button label' );
+	}
+
+	/**
+	 * A consumer's filter that overrides a single key (here: 'allow') must change only that string
+	 * -- Notice::strings() merges the filtered array OVER the defaults precisely so a partial
+	 * override cannot blank out, or otherwise affect, the keys it does not mention.
+	 */
+	public function test_filter_overriding_one_key_changes_only_that_string() {
+		$config  = $this->make_config( array( 'enabled' => true ) );
+		$consent = new Gate( $config );
+		$notice  = new Notice( $config, $consent );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+		Functions\when( 'apply_filters' )->alias(
+			function ( $hook, $value ) {
+				if ( 'cx_tracker_notice_strings' === $hook ) {
+					$value['allow'] = 'Sure, go ahead';
+				}
+				return $value;
+			}
+		);
+
+		ob_start();
+		$notice->render();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( '<button>Sure, go ahead</button>', $output, 'the overridden key must use the filtered string' );
+		$this->assertStringContainsString( '<button>No thanks</button>', $output, 'a key the filter did not mention must keep its default' );
+		$this->assertStringContainsString( 'can send anonymous usage data', $output, 'the intro string is untouched by a filter that only overrides allow' );
+	}
+
+	/**
+	 * A filter that misbehaves and returns something other than an array (e.g. a consumer's
+	 * callback has a bug, or returns false/null by mistake) must be ignored entirely, falling back
+	 * to the defaults -- rather than fataling on array_merge() or rendering nothing.
+	 */
+	public function test_filter_returning_a_non_array_is_ignored_and_defaults_still_render() {
+		$config  = $this->make_config( array( 'enabled' => true ) );
+		$consent = new Gate( $config );
+		$notice  = new Notice( $config, $consent );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+		Functions\when( 'apply_filters' )->alias(
+			function ( $hook, $value ) {
+				if ( 'cx_tracker_notice_strings' === $hook ) {
+					return 'not-an-array';
+				}
+				return $value;
+			}
+		);
+
+		ob_start();
+		$notice->render();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( '<button>Allow</button>', $output, 'a non-array filter return must fall back to the default allow string' );
+		$this->assertStringContainsString( '<button>No thanks</button>', $output, 'a non-array filter return must fall back to the default decline string' );
+		$this->assertStringContainsString( 'can send anonymous usage data', $output, 'a non-array filter return must fall back to the default intro string' );
+	}
+
+	/**
+	 * The important case: cx_tracker_notice_strings hands a THIRD PARTY's callback direct control
+	 * over text that Notice::render_prompt() echoes into wp-admin. A malicious (or merely buggy)
+	 * filter returning markup must not become an XSS vector -- the SDK's own esc_html() call around
+	 * $text['intro'] in render_prompt() must still escape it, exactly as it already does for the
+	 * server-supplied notice message (see the analogous
+	 * test_render_server_notice_escapes_a_malicious_server_supplied_message() above).
+	 */
+	public function test_filter_returning_a_malicious_string_is_still_escaped_on_output() {
+		$config  = $this->make_config( array( 'enabled' => true ) );
+		$consent = new Gate( $config );
+		$notice  = new Notice( $config, $consent );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+
+		$payload = '<script>alert(1)</script><img src=x onerror=alert(2)>';
+		Functions\when( 'apply_filters' )->alias(
+			function ( $hook, $value ) use ( $payload ) {
+				if ( 'cx_tracker_notice_strings' === $hook ) {
+					$value['intro'] = $payload;
+				}
+				return $value;
+			}
+		);
+
+		ob_start();
+		$notice->render();
+		$output = ob_get_clean();
+
+		$this->assertStringNotContainsString( '<script>', $output, 'a raw <script> tag from a filter must never reach the output' );
+		$this->assertStringNotContainsString( '<img', $output, 'a raw <img> tag from a filter must never reach the output' );
+		$this->assertStringContainsString(
+			htmlspecialchars( $payload, ENT_QUOTES, 'UTF-8' ),
+			$output,
+			'the filtered string must still render, but only in its escaped form'
+		);
+	}
 }

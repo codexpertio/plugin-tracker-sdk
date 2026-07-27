@@ -38,13 +38,6 @@ class Config {
 	private $version = '';
 
 	/**
-	 * Absolute path to the consumer's main plugin file, used for activation hooks.
-	 *
-	 * @var string
-	 */
-	private $file = '';
-
-	/**
 	 * Whether the author has enabled telemetry for this project (consent gate 1).
 	 *
 	 * @var bool
@@ -88,7 +81,6 @@ class Config {
 		$this->project = isset( $args['project'] ) && is_string( $args['project'] ) ? $args['project'] : '';
 		$this->plugin  = isset( $args['plugin'] ) && is_string( $args['plugin'] ) ? $args['plugin'] : '';
 		$this->version = isset( $args['version'] ) && is_string( $args['version'] ) ? $args['version'] : '';
-		$this->file    = isset( $args['file'] ) && is_string( $args['file'] ) ? $args['file'] : '';
 		$this->enabled = ! empty( $args['enabled'] );
 
 		if ( isset( $args['endpoint'] ) && is_string( $args['endpoint'] ) && '' !== $args['endpoint'] ) {
@@ -195,15 +187,6 @@ class Config {
 	 */
 	public function version() {
 		return $this->version;
-	}
-
-	/**
-	 * Consumer main plugin file path.
-	 *
-	 * @return string
-	 */
-	public function file() {
-		return $this->file;
 	}
 
 	/**

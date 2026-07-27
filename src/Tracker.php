@@ -141,7 +141,7 @@ class Tracker {
 	 * because our SDK was misconfigured; the errors are surfaced through a wp-admin notice in
 	 * development instead.
 	 *
-	 * @param array $args project, plugin, version, file, enabled, endpoint.
+	 * @param array $args project, plugin, version, enabled, endpoint.
 	 * @return Tracker|null
 	 */
 	public static function init( array $args ) {
@@ -191,6 +191,9 @@ class Tracker {
 	 * @return void
 	 */
 	private function hook() {
+
+		// Before anything user-facing runs, so the consent prompt is translated on first render.
+		I18n::load();
 
 		add_action( $this->scheduler->hook(), array( $this, 'flush' ) );
 
@@ -273,11 +276,22 @@ class Tracker {
 	}
 
 	/**
-	 * Send whatever is queued. Runs on the scheduled job only.
+	 * Send whatever is queued.
 	 *
+	 * @param bool $force Bypass the background-request check. Tests and deliberate synchronous
+	 *                    flushes only -- never pass true from a page-request code path.
 	 * @return void
 	 */
-	public function flush() {
+	public function flush( $force = false ) {
+
+		// Never on a page request. flush() has to be public because it is an action callback, so a
+		// consumer can call it directly -- and doing so would make a blocking HTTP request inside
+		// somebody's page load, which is the single behaviour this SDK is most careful to avoid.
+		// WP-Cron and WP-CLI are the legitimate callers; $force exists for tests and for a
+		// consumer who deliberately wants a synchronous flush.
+		if ( ! $force && ! $this->is_background_request() ) {
+			return;
+		}
 
 		// Re-checked here, not just at track() time. An admin may have opted out after events
 		// were queued, and that decision must win.
@@ -313,6 +327,20 @@ class Tracker {
 		// apply() owns rescheduling from here: a retry needs a short backoff rather than a full
 		// interval, so the decision belongs with the code that classifies the result.
 		$this->apply( $sent, $batch );
+	}
+
+	/**
+	 * Is this a request where a blocking HTTP call is acceptable?
+	 *
+	 * @return bool
+	 */
+	private function is_background_request() {
+
+		if ( function_exists( 'wp_doing_cron' ) && wp_doing_cron() ) {
+			return true;
+		}
+
+		return defined( 'WP_CLI' ) && WP_CLI;
 	}
 
 	/**
@@ -596,6 +624,13 @@ class Tracker {
 			// The ingestion credential is dropped too. Keeping a live token for a site that has
 			// explicitly said no is not defensible, and re-registration is cheap if they opt back in.
 			$this->forget_token();
+
+			// And the salt, which is what the anonymous install ID is derived from. A site that
+			// declined should retain nothing that can be correlated to data we already hold.
+			// Consequence, accepted deliberately: opting out and back in yields a NEW install ID, so
+			// a site that cycles consent counts more than once. Leaving a live identifier on a site
+			// that said no is the worse trade.
+			$this->install->forget();
 		}
 
 		wp_safe_redirect( wp_get_referer() ? wp_get_referer() : admin_url() );
