@@ -32,7 +32,6 @@ add_action( 'plugins_loaded', function () {
         'project' => 'pt_proj_1a2b3c',   // public, non-secret; issued by the dashboard
         'plugin'  => 'my-plugin',
         'version' => MY_PLUGIN_VERSION,
-        'file'    => MY_PLUGIN_FILE,
         'enabled' => true,               // consent gate 1: you, the author, enable it
     ) );
 
@@ -89,6 +88,7 @@ src/
 ├── Tracker.php              # the facade, and the only class you need
 ├── Config.php               # validated construction
 ├── Event.php                # the closed event allow-list
+├── I18n.php                 # loads the SDK's own text domain from languages/
 ├── Consent/Gate.php         # the double gate
 ├── Consent/Notice.php       # reusable opt-in prompt
 ├── Storage/Queue.php        # bounded local buffer
@@ -96,19 +96,38 @@ src/
 ├── Http/Transport.php       # requests, and response-envelope resolution
 ├── Cron/Scheduler.php       # jittered scheduled flush
 └── Privacy/Personal_Data.php # WP exporter/eraser registration
+
+languages/plugin-tracker-sdk.pot  # sibling of src/, shipped by bin/build-dist.sh
 ```
 
 `Tracker`, `Config` and `Event` sit at the root deliberately: `Tracker` is the single public entry
-point, and `Config`/`Event` are the contract types every subnamespace depends on.
+point, and `Config`/`Event` are the contract types every subnamespace depends on. `I18n` sits there
+too, alongside them, because `Tracker::hook()` calls it directly.
+
+## Translations
+
+The SDK ships and loads its own `plugin-tracker-sdk` text domain from its own `languages/`
+directory via `load_textdomain()` -- `load_plugin_textdomain()` cannot be used here, because that
+helper resolves against the *consumer's* plugin directory, and this SDK has no plugin header of
+its own. `I18n::load()` is called before anything user-facing renders, so the consent prompt
+(`Consent\Notice`) is translated on first paint wherever a `.mo` exists for the site's locale. A
+consumer can still override individual strings -- e.g. to match their own product's wording rather
+than merely translate it -- through the `cx_tracker_notice_strings` filter (see
+[`docs/CONSENT.md`](docs/CONSENT.md)). Run `composer makepot` to regenerate
+`languages/plugin-tracker-sdk.pot`.
 
 ## Development
 
 ```bash
 composer install
-composer test        # PHPUnit via brain/monkey -- no WordPress install needed
-composer lint        # phpcs, WPCS + PHPCompatibility 7.2-
-composer analyze     # PHPStan level 5
-composer dist        # build a scoped, distributable copy
+composer test              # PHPUnit via brain/monkey -- no WordPress install needed
+composer test-f <filter>   # single test
+composer lint               # phpcs, WPCS + PHPCompatibility 7.2-
+composer lint:fix           # phpcbf
+composer analyze            # PHPStan level 5
+composer makepot            # regenerate languages/plugin-tracker-sdk.pot
+composer dist               # build a scoped, distributable copy
+composer verify-collision   # bin/verify-collision.sh -- the two-consumer collision test (see below)
 ```
 
 `composer lint` and `composer analyze` are both **clean and can gate**. Unlike
@@ -145,7 +164,15 @@ loads whichever `vendor/autoload.php` registers first, so a plugin tested agains
 against 1.0 and fatals on a missing method. Plain Composer cannot prevent this.
 
 `composer dist` therefore emits a **namespace-scoped** copy: `Codexpert\PluginTracker\` is rewritten
-to a per-version prefix, making each consumer's copy self-contained and requiring nothing of them.
+to a per-version prefix (e.g. `CxTrackerSdk_v1_0_0_92521f` -- the trailing hex is a short digest of
+the raw version string, appended because collapsing non-word characters alone is lossy: `1.0.0-hotfix`
+and `1.0.0+hotfix` would otherwise collapse to the same prefix and reintroduce the exact version skew
+this scoping exists to prevent), making each consumer's copy self-contained and requiring nothing of
+them.
+
+`composer verify-collision` runs the test this design exists to pass: it builds two scoped copies at
+different versions, loads both in one PHP process the way two plugins on one site would, and asserts
+they coexist with fully isolated state -- see [`bin/verify-collision.sh`](bin/verify-collision.sh).
 
 `automattic/jetpack-autoloader` was considered and rejected. It only works if *every* consumer
 adopts it, which is enforceable for plugins we control and not for third parties who downloaded a

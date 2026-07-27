@@ -19,7 +19,6 @@ Tracker::init( array(
 	'project' => 'pt_proj_1a2b3c',
 	'plugin'  => 'my-plugin',
 	'version' => '2.4.1',
-	'file'    => __FILE__,
 	'enabled' => true, // Gate 1
 ) );
 ```
@@ -62,6 +61,20 @@ An opt-out record is versioned the same way (`opt_out()` also stamps the current
 `Gate::answered()` — "has the admin been asked, either way?" — is also policy-scoped, and `Notice`
 correctly re-prompts under a new policy rather than treating "declined under the old wording" as
 "declined under the new one."
+
+### An explicit opt-out also resets the anonymous install ID
+
+`Gate::opt_out()` itself only records the decision. The cleanup that actually happens when an admin
+clicks "No thanks" lives in `Tracker::handle_consent()`, and it goes further than the consent record:
+it unschedules the flush, clears the local queue, discards the stored token -- **and calls
+`Install::forget()`**, which deletes the local salt the anonymous install ID is derived from (see
+[`EVENTS.md`](EVENTS.md#the-anonymous-install-id)).
+
+That means state does **not** survive an explicit opt-out. Consequence, accepted deliberately: a
+site that opts out and later opts back in gets a **new** install ID, so a site that cycles consent
+counts more than once on the dashboard. The alternative -- keeping a live identifier on a site that
+explicitly said no -- was judged the worse trade: nothing should remain that could be correlated to
+data already reported, once an admin has declined.
 
 ## The `CX_TRACKER_DISABLE` kill switch
 
