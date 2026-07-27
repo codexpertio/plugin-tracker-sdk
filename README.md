@@ -23,31 +23,71 @@ Opt-in telemetry for WordPress plugins. Consent-gated by default, anonymous by c
 
 ## Quick start
 
+There is no hand-written bootstrap. The dashboard generates a code snippet and the plugin author pastes
+it into their **main plugin file**, above their own plugin's bootstrap. That snippet is the entire
+integration -- no hooks to register, no `track()` calls for lifecycle events, no settings screen to build.
+Full detail, and why every part of it is shaped the way it is: [`docs/SNIPPET.md`](docs/SNIPPET.md).
+
 ```php
-use Codexpert\PluginTracker\Tracker;
-use Codexpert\PluginTracker\Event;
+if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
-add_action( 'plugins_loaded', function () {
-    $tracker = Tracker::init( array(
-        'project' => 'pt_proj_1a2b3c',   // public, non-secret; issued by the dashboard
-        'plugin'  => 'my-plugin',        // slug: keys options, cron hooks, nonces
-        'name'    => 'My Plugin',        // human-readable: what the consent prompt shows
-        'version' => MY_PLUGIN_VERSION,
-        'enabled' => true,               // consent gate 1: you, the author, enable it
-    ) );
+	require_once __DIR__ . '/plugin-tracker-sdk/autoload.php';
 
-    if ( $tracker ) {
-        $tracker->track( Event::FEATURE, array( 'name' => 'csv_export' ) );
-    }
-} );
+	/**
+	 * @return \CxTrackerSdk_v1_0_0_92521f\Tracker|null
+	 */
+	function my_plugin_tracker() {
+		global $my_plugin_tracker;
+
+		if ( ! isset( $my_plugin_tracker ) ) {
+			$my_plugin_tracker = \CxTrackerSdk_v1_0_0_92521f\Tracker::init(
+				array(
+					'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87', // dashboard-issued, public
+					'plugin'  => 'my-plugin',
+					'name'    => 'My Plugin',
+					'version' => '1.4.2',
+					'file'    => __FILE__, // required: the MAIN plugin file, see docs/SNIPPET.md
+					'enabled' => true,     // consent gate 1: you, the author, enable it
+				)
+			);
+		}
+
+		return $my_plugin_tracker;
+	}
+
+	my_plugin_tracker();
+}
+
+// ... your own plugin's bootstrap follows.
 ```
 
-`track()` only ever writes to a local queue. It never makes a network call, so it is safe in an
-activation hook — a slow or unreachable endpoint can never delay or break your activation.
+The moment `init()` succeeds, the SDK registers its own `register_activation_hook()`,
+`register_deactivation_hook()` and `init` listeners, and raises `install`, `activate`, `version`,
+`compat` and `deactivation` itself. `file` must be the plugin's own main file --
+`register_activation_hook()` keys on `plugin_basename( $file )`, so a class file or an include
+computes a basename WordPress never fires, and those hooks silently never run: nothing errors, data
+just never arrives.
+
+The only thing left to call yourself is a named feature, because only you know what your features are:
+
+```php
+$tracker = my_plugin_tracker();
+
+if ( $tracker ) {
+	$tracker->track( \CxTrackerSdk_v1_0_0_92521f\Event::FEATURE, array( 'name' => 'csv_export' ) );
+}
+```
+
+`track()` only ever writes to a local queue. It never makes a network call, so it is safe anywhere --
+including from an activation hook.
 
 `init()` returns `null` on invalid config rather than throwing. Your users' sites must not
 white-screen because our SDK was misconfigured; the errors surface as an admin notice when
 `WP_DEBUG` is on.
+
+Deactivating shows a feedback dialog on this plugin's row in `plugins.php`, asking why -- a separate
+consent basis, on a separate route, that never blocks deactivation. Full detail:
+[`docs/FEEDBACK.md`](docs/FEEDBACK.md).
 
 ## Two consent gates, and nothing moves without both
 
@@ -70,11 +110,20 @@ state.
 
 Full detail: [`docs/CONSENT.md`](docs/CONSENT.md).
 
+The deactivation-feedback modal (below) is deliberately **not** behind either gate -- it has its own,
+separate consent basis. See [`docs/FEEDBACK.md`](docs/FEEDBACK.md).
+
 ## What it sends
 
 Six events — `install`, `activate`, `version`, `compat`, `feature`, `deactivation` — each carrying
 an anonymous install ID, your plugin's version, the WordPress and PHP versions, the site locale,
 and whether the site is multisite.
+
+**Five of the six are automatic.** [`Lifecycle`](src/Lifecycle.php) fires `install` and `activate` from
+the `register_activation_hook()` it registers itself, `deactivation` from the `register_deactivation_hook()`
+next to it, and `version`/`compat` from an `init` listener that detects drift. **`feature` is the only one
+you call yourself** -- `$tracker->track( Event::FEATURE, [...] )` -- because only you know what your
+plugin's features are. Full detail per event: [`docs/EVENTS.md`](docs/EVENTS.md).
 
 **Never** the site address, an email, a username, an IP, or any content. The active-plugin list is
 refused too, despite being the most-requested telemetry field, because the set of active plugins is
@@ -93,24 +142,28 @@ the frozen contract. [`docs/readme-txt-block.md`](docs/readme-txt-block.md) is a
 
 ```
 src/
-├── Tracker.php              # the facade, and the only class you need
-├── Config.php               # validated construction
-├── Event.php                # the closed event allow-list
-├── I18n.php                 # loads the SDK's own text domain from languages/
-├── Consent/Gate.php         # the double gate
-├── Consent/Notice.php       # reusable opt-in prompt
-├── Storage/Queue.php        # bounded local buffer
-├── Storage/Install.php      # the anonymous install ID
-├── Http/Transport.php       # requests, and response-envelope resolution
-├── Cron/Scheduler.php       # jittered scheduled flush
+├── Tracker.php               # the facade, and the only class you need
+├── Config.php                # validated construction
+├── Event.php                 # the closed event allow-list
+├── Lifecycle.php             # registers activation/deactivation/init; fires the five automatic events
+├── I18n.php                  # loads the SDK's own text domain from languages/
+├── Consent/Gate.php          # the double gate
+├── Consent/Notice.php        # reusable opt-in prompt
+├── Feedback/Deactivation.php # the deactivation-feedback modal, a separate consent basis
+├── Storage/Queue.php         # bounded local buffer
+├── Storage/Install.php       # the anonymous install ID
+├── Http/Transport.php        # requests, and response-envelope resolution
+├── Cron/Scheduler.php        # jittered scheduled flush
 └── Privacy/Personal_Data.php # WP exporter/eraser registration
 
 languages/plugin-tracker-sdk.pot  # sibling of src/, shipped by bin/build-dist.sh
 ```
 
 `Tracker`, `Config` and `Event` sit at the root deliberately: `Tracker` is the single public entry
-point, and `Config`/`Event` are the contract types every subnamespace depends on. `I18n` sits there
-too, alongside them, because `Tracker::hook()` calls it directly.
+point, and `Config`/`Event` are the contract types every subnamespace depends on. `I18n` and
+`Lifecycle` sit there too, alongside them: `Tracker::hook()` calls `I18n` directly, and composes
+`Lifecycle` as the object that registers the activation/deactivation/init hooks and raises `install`,
+`activate`, `version` and `compat` on the consumer's behalf.
 
 ## Translations
 

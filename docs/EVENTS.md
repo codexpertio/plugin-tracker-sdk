@@ -34,10 +34,12 @@ Every request carries this envelope. `schema` is what lets ingestion stay backwa
 |-----------|--------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------|
 | `schema`  | int    | **keep**  | Payload contract version. Currently `1`. Ingestion dispatches on this.                                                                          |
 | `sdk`     | string | **keep**  | SDK semver, e.g. `1.0.0`. Records which version a site reports with, so "this version is dead" becomes evidence rather than assumption (§10.2). |
-| `project` | string | **keep**  | Public, non-secret project identifier. Says which plugin is reporting. Useless on its own.                                                      |
+| `hash`    | string | **keep**  | Dashboard-issued, public, non-secret plugin identifier from the pasted snippet (`Config::HASH_PATTERN`, `/^[a-f0-9]{32,64}\z/`). Says which plugin is reporting. Useless on its own. |
 | `install` | string | **keep**  | Anonymous install ID — see below.                                                                                                               |
 | `sent_at` | int    | **keep**  | Unix UTC timestamp of transmission.                                                                                                             |
 | `events`  | array  | **keep**  | Batch of event objects.                                                                                                                         |
+
+**`project` is legacy and optional, and it is not on the wire.** `Config` still accepts a `project` argument (`Config::PROJECT_PATTERN`, `pt_proj_<alnum>`) for integrations built before `hash` existed, so an older integration keeps validating -- but `Tracker::envelope()` and the registration call in `Tracker::register()` both key off `hash` only. A site running an older integration that still passes `project` is not broken by this: `Config` accepts the argument, it is simply never transmitted.
 
 Authentication is **not** in the envelope — it is a per-install bearer token in the
 `Authorization` header. See [`WIRE.md`](WIRE.md).
@@ -89,26 +91,23 @@ Every event object carries these. All are environment facts, none identify a per
 
 ## The six events
 
-> **The SDK fires nothing on its own.** Every event below is raised by the consumer calling
-> `Tracker::track()`. The SDK keeps no "have I seen this version before" state, so "once per install"
-> and "changed from a previously-seen value" describe when a consumer *should* call `track()`, not
-> behaviour the SDK enforces. `plugins/tracker-sdk-example` shows one way to hold that state.
+> **The SDK raises five of these six itself.** [`Lifecycle`](../src/Lifecycle.php) is registered automatically by `Tracker::hook()` the moment `Tracker::init()` succeeds: it calls `register_activation_hook()` (fires `install` and `activate`), `register_deactivation_hook()` (fires `deactivation`), and hooks `init` at priority 20 (fires `version` and `compat` on drift). A consumer following [`SNIPPET.md`](SNIPPET.md) registers no hook and calls no `track()` for any of these five. **Only `feature` is raised by the consumer** — the SDK cannot know what a plugin's own features are, so that one call is theirs to make. `plugins/plugin-tracker-sdk-example` shows a real plugin wired this way.
 
 ### `install`
 
-First run after the SDK initialises on a site where no install record exists. Fires once per install ID.
+Raised automatically by `Lifecycle::on_activate()`, via `register_activation_hook()`, on the first activation this install has ever recorded. Distinguished by a stored marker (`Config::option( 'installed' )`), not by "is the version option empty", so a consumer clearing their own options cannot make a site look new. Fires once per install ID.
 
 Common fields only.
 
 ### `activate`
 
-The consumer's plugin was activated. May fire repeatedly over an install's life (deactivate → reactivate).
+Raised automatically by `Lifecycle::on_activate()`, via `register_activation_hook()`, on every activation -- including the one that also fires `install`. May fire repeatedly over an install's life (deactivate → reactivate).
 
 Common fields only.
 
 ### `version`
 
-The consumer's plugin version changed from a previously-seen value — an upgrade or a downgrade.
+Raised automatically by `Lifecycle::on_init()`, hooked at `init` priority 20, when the consumer's plugin version changed from a previously-seen value — an upgrade or a downgrade. Detected on `init` rather than at activation, because a plugin updated in place — the normal case — never fires the activation hook again; an integration relying on activation alone would never see an upgrade.
 
 | Extra field | Type   | Keep/drop | Why                                                                                             |
 |-------------|--------|-----------|-------------------------------------------------------------------------------------------------|
@@ -118,7 +117,7 @@ The consumer's plugin version changed from a previously-seen value — an upgrad
 
 ### `compat`
 
-The environment crossed a threshold the consumer cares about — a WordPress or PHP version change.
+Raised automatically by the same `Lifecycle::on_init()` check as `version`: the environment crossed a threshold the consumer cares about — a WordPress or PHP version change.
 
 | Extra field | Type   | Keep/drop | Why                              |
 |-------------|--------|-----------|----------------------------------|
@@ -127,8 +126,7 @@ The environment crossed a threshold the consumer cares about — a WordPress or 
 
 ### `feature`
 
-A named feature was used. **The only event carrying consumer-supplied strings, and therefore the only injection risk in
-the contract.**
+A named feature was used. **The only one of the six the consumer raises themselves**, by calling `Tracker::track( Event::FEATURE, [...] )` directly -- the SDK cannot know what a plugin's own features are. It is also the only event carrying consumer-supplied strings, and therefore the only injection risk in the contract.
 
 | Extra field | Type   | Keep/drop | Why                                                                                               |
 |-------------|--------|-----------|---------------------------------------------------------------------------------------------------|
@@ -144,7 +142,7 @@ the contract.**
 
 ### `deactivation`
 
-The consumer's plugin was deactivated. Carries optional voluntary survey feedback (#40, §4.7).
+Raised automatically by `Lifecycle::on_deactivate()`, via `register_deactivation_hook()`. Carries an optional `reason`, populated only when the deactivation-feedback modal collected one *and* the site has telemetry consent -- see [`FEEDBACK.md`](FEEDBACK.md) for the separate, unauthenticated route the modal itself uses for the free-text comment, which never reaches this stream (#40, §4.7).
 
 | Extra field | Type   | Keep/drop | Why                                                                                                                                                                                                                                   |
 |-------------|--------|-----------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|

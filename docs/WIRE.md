@@ -18,14 +18,18 @@ secret in the download is a **rejected** design, because the author bundles our 
 plugin is listed on WordPress.org the zip is published and anyone can read the key out of it.
 
 **Both are satisfiable, and this is how.** The author's secret exists and is shown once — but it never ships. It
-authenticates the *author*, in the dashboard. What ships is a non-secret project identifier, and each install exchanges
-it for its own token:
+authenticates the *author*, in the dashboard. What ships is a non-secret `hash` baked into the generated snippet
+(see [`SNIPPET.md`](SNIPPET.md)), and each install exchanges it for its own token:
 
-| Credential                       | Secret? | Where it lives                                       | Scope                                           |
-|----------------------------------|---------|------------------------------------------------------|-------------------------------------------------|
-| Author project secret            | **yes** | Dashboard only, hash stored server-side, shown once  | Provisioning and rotation, never in a plugin    |
-| Project identifier (`pt_proj_…`) | no      | Baked into the artifact; readable by anyone          | Says which plugin reports. Useless alone.       |
-| Install token                    | **yes** | Generated per install, stored in that site's options | Authenticates ingestion for exactly one install |
+| Credential                                | Secret? | Where it lives                                       | Scope                                           |
+|--------------------------------------------|---------|------------------------------------------------------|-------------------------------------------------|
+| Author project secret                     | **yes** | Dashboard only, hash stored server-side, shown once  | Provisioning and rotation, never in a plugin    |
+| Plugin hash (`Config::HASH_PATTERN`, hex) | no      | Baked into the generated snippet; readable by anyone | Says which plugin reports. Useless alone.       |
+| Install token                             | **yes** | Generated per install, stored in that site's options | Authenticates ingestion for exactly one install |
+
+**`project` (`pt_proj_…`) is a legacy, optional identifier.** It predates the snippet, and `Config` still accepts
+and validates it (`Config::PROJECT_PATTERN`) so an integration built before `hash` existed keeps working -- but it
+is never part of what the SDK transmits. `hash` is the identifier on the wire.
 
 Why this is strictly better than shipping the secret, in the terms #40 uses:
 
@@ -43,13 +47,13 @@ Why this is strictly better than shipping the secret, in the terms #40 uses:
 Called once per install, **after** both consent gates pass. Idempotent.
 
 Unauthenticated — this is the call that obtains the credential. It must therefore be rate-limited by source and by
-project on the server.
+`hash` on the server.
 
 ```json
 {
   "schema":  1,
   "sdk":     "1.0.0",
-  "project": "pt_proj_1a2b3c",
+  "hash":    "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
   "install": "ins_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
   "plugin":  "my-plugin",
   "consent": { "policy": 1, "at": 1769472000 }
@@ -68,7 +72,7 @@ Success — `200`:
 The SDK stores `token` and honours a server-supplied `flush_interval` if present, which lets the backend widen intervals
 under load without a consumer update.
 
-**Idempotency:** re-registering the same `install` for the same `project` must return a valid token rather than
+**Idempotency:** re-registering the same `install` for the same `hash` must return a valid token rather than
 erroring. Registration re-runs whenever the SDK finds itself with consent but no token, so it must be safe to call
 repeatedly.
 

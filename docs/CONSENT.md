@@ -16,13 +16,18 @@ The plugin author passes `enabled` in the array given to `Tracker::init()`:
 
 ```php
 Tracker::init( array(
-	'project' => 'pt_proj_1a2b3c',
+	'hash'    => 'a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4', // dashboard-issued, public; from the pasted snippet
 	'plugin'  => 'my-plugin',
 	'name'    => 'My Plugin',   // shown in the prompt; omit and the slug is prettified
 	'version' => '2.4.1',
+	'file'    => __FILE__,      // required: the MAIN plugin file -- see docs/SNIPPET.md
 	'enabled' => true, // Gate 1
 ) );
 ```
+
+In practice a consumer does not type this call by hand -- the dashboard generates it as part of the pasted
+snippet described in [`SNIPPET.md`](SNIPPET.md), and `hash`/`file` are validated as required by `Config`. It is
+shown here only to name gate 1 explicitly.
 
 This is a decision made once, by the author, at build time — it says "this project is allowed to
 telemeter at all." It is checked via `Config::enabled()`. If it is false (or omitted), the gate
@@ -155,13 +160,29 @@ The shipped prompt:
 deprecation/advisory message (the only channel that reaches a site running a years-old bundled copy
 of the SDK), and a `WP_DEBUG`-only developer warning when `Config` fails validation.
 
+## The deactivation-feedback modal is a separate consent basis
+
+`Tracker::hook()` also registers [`Feedback\Deactivation`](../src/Feedback/Deactivation.php), which shows a
+dialog on this plugin's row in `plugins.php` asking why an administrator is deactivating. That dialog is **not**
+gated by `Gate::granted()` -- it does not require gate 2, and does not even require the site to have ever been
+asked. Its consent basis is the submission itself: the administrator reads an itemised disclosure of exactly what
+will be sent and presses a button, which is contemporaneous, informed consent for that one transmission --
+stronger than a general opt-in recorded months earlier, not weaker.
+
+Two things from this document still apply to it: `CX_TRACKER_DISABLE` wins unconditionally over the modal too,
+and gate 1 (`Config::enabled()`) still governs whether it can appear at all -- if the author never enabled the
+project there is nowhere to report to. Full reasoning and the exact payload live in
+[`FEEDBACK.md`](FEEDBACK.md); do not assume anything said above about gate 2 or `Notice` applies to it.
+
 ## What a consumer must do to be WordPress.org compliant
 
 1. Pass `enabled` deliberately (gate 1) — do not default it to `true` in a way that makes gate 2 the
    only real gate.
 2. Do nothing else for the opt-in UI — `Tracker::hook()` wires `Notice::render()` into
    `admin_notices` and the `admin_post_cx_tracker_consent_{slug}` handler automatically once
-   `Tracker::init()` is called on an admin request.
+   `Tracker::init()` is called on an admin request. The deactivation-feedback modal is wired the same
+   automatic way (`admin_footer-plugins.php` and its submit handler) -- see the section above and
+   [`FEEDBACK.md`](FEEDBACK.md).
 3. **Disclose the external service in `readme.txt`.** WordPress.org requires plugins that transmit
    data to a third-party service to declare it in the "External services" section of `readme.txt`,
    with what is sent, when, and a link to the service's terms. See
