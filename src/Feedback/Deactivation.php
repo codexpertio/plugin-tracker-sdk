@@ -1255,8 +1255,8 @@ class Deactivation {
 %1$s .cx-tracker-feedback__note label { color: #f0f0f1; }
 %1$s .cx-tracker-feedback__dialog textarea { background: #2c3338; color: #f0f0f1; border-color: #3c434a; }
 %1$s .cx-tracker-feedback__dialog textarea:focus { border-color: #72aee6; box-shadow: 0 0 0 1px #72aee6; }
-%1$s .cx-tracker-feedback__dialog input[type="radio"] { border-color: #3c434a; background: #2c3338; }
-%1$s .cx-tracker-feedback__dialog input[type="radio"]:checked::before { background-color: #72aee6; }
+%1$s .cx-tracker-feedback__dialog input[type=radio] { border-color: #3c434a; background: #2c3338; }
+%1$s .cx-tracker-feedback__dialog input[type=radio]:checked::before { background-color: #72aee6; }
 %1$s .cx-tracker-feedback__disclosure { background: #2c3338; }
 }
 ';
