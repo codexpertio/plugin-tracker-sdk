@@ -8,9 +8,13 @@ mean one document describing two things that must never be conflated.
 Implemented by [`Feedback\Deactivation`](../src/Feedback/Deactivation.php). If this document and that code ever
 disagree, the code is right and this file is stale.
 
-> **Backend status: this endpoint does not exist yet.** Like the two routes in [`WIRE.md`](WIRE.md), `POST
-> /telemetry/feedback` is the client half of a contract awaiting its server half. Confirm it is live before publishing a
-> plugin whose `readme.txt` claims to contact it.
+> **Backend status: implemented.** `Plugin_Tracker\API\Telemetry::feedback()` serves this route and
+> stores rows in `tracker_telemetry_deactivation_feedback`.
+>
+> **The join-key rule is enforced on both sides.** That table has no install column, and the route
+> refuses any request carrying an `install` field or an `Authorization` header — so if a future change
+> to this SDK ever regressed the payload, ingestion would reject the request rather than write the row
+> that de-anonymises the stream.
 
 ---
 

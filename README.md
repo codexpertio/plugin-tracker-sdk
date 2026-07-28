@@ -246,10 +246,21 @@ a page request.
 
 ## Status
 
-The client is complete. **The two backend endpoints it speaks to do not exist yet** —
-`POST /telemetry/register` and `POST /telemetry/events` are issues #43 and #44, blocked by #30
-(entitlement). [`docs/WIRE.md`](docs/WIRE.md) is the client half of that contract, written first so
-the backend can implement against it.
+Client and server are both complete. `Plugin_Tracker\API\Telemetry` in `plugins/plugin-tracker` serves
+`POST /telemetry/register`, `POST /telemetry/events` and `POST /telemetry/feedback` — the server half of
+issue #40. [`docs/WIRE.md`](docs/WIRE.md) is the contract they share.
+
+Ingestion refuses a payload whose `hash` has no enabled project, so a project has to exist before a
+site can report. Until the dashboard lands (issue #41) that is done with WP-CLI:
+
+```bash
+wp pt telemetry create --plugin=my-plugin   # prints the public hash and the author secret, once
+wp pt telemetry list                        # projects, with install/event/feedback counts
+wp pt telemetry revoke <id>                 # refuse new data, keep what arrived
+```
+
+Still outstanding: the dashboard reports and per-project export/delete (#41), and linking a project to
+an entitlement so telemetry counts against a plan (#30).
 
 ## License
 

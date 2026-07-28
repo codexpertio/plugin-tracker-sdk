@@ -2,14 +2,18 @@
 
 What the SDK sends and how it interprets what comes back. Namespace `plugin-tracker/v1`.
 
-> **Backend status: these two endpoints do not exist yet.** Confirmed by reading
-> `plugins/plugin-tracker/app/Controllers/Common/API.php` — there is no `/telemetry/*` route, no
-> per-site credential, and no registration concept anywhere in the codebase. They are issue #43
-> (ingestion) and #44 (v2 ingestion endpoint), both blocked by #30 (entitlement).
+> **Backend status: implemented.** `Plugin_Tracker\API\Telemetry` in `plugins/plugin-tracker` serves
+> all three routes, and `Plugin_Tracker\Bootstrap\Installer` creates the four tables PLANS.md §12
+> names. This is the server half of issue #40 (telemetry SDK + ingestion + consent).
 >
-> This document is therefore the **client half of a contract awaiting its server half**. It is
-> written first on purpose: §10.5 says the SDK's transport cannot be written before the credential
-> model exists, so the model is settled here and the backend implements against it.
+> An earlier revision of this document attributed ingestion to issues #43 and #44. That was wrong:
+> #43 is the background-jobs framework and #44 is the v2 namespace. Ingestion is #40.
+>
+> **These routes stay on `plugin-tracker/v1` permanently.** #44 puts new endpoints on v2, and these
+> are the exception because the client half already shipped: a consumer bundles this SDK into their
+> plugin and freezes it at whatever version they downloaded, on sites nobody can ask to update
+> (§10.2). A v2 alias may be added; v1 cannot be retired, and ingestion must accept every payload
+> version ever served.
 
 ## Credential model, and the conflict it resolves
 
