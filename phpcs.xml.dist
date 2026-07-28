@@ -4,6 +4,9 @@
 
 	<file>.</file>
 	<exclude-pattern>/vendor/*</exclude-pattern>
+	<!-- PHPStan's result cache. Generated PHP, inside the package because a shared default
+	     tmpDir made two packages collide and phpstan runs nondeterministic. Not ours to style. -->
+	<exclude-pattern>*/.phpstan-cache/*</exclude-pattern>
 	<exclude-pattern>/dist/*</exclude-pattern>
 	<exclude-pattern>/tests/*/fixtures/*</exclude-pattern>
 	<!--

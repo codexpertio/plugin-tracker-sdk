@@ -32,6 +32,18 @@
 # as an empty file. An empty baseline is worse than none: PHPStan reports unmatched ignoreErrors
 # entries as errors, so a stale baseline fails the build for no reason.
 parameters:
+	# A cache directory of this package's OWN, which is not a tidiness preference.
+	#
+	# PHPStan defaults tmpDir to sys_get_temp_dir()/phpstan, so every project on the machine shares one
+	# result cache. This repo has two analysed packages with DIFFERENT settings -- plugins/plugin-tracker
+	# at phpVersion 70400 with a baseline, packages/php/plugin-tracker-sdk at 70200 without one -- and
+	# they were clobbering each other's cached results. The symptom is the worst kind: running one after
+	# the other reports errors that vanish on a re-run, so the gate is nondeterministic and everyone
+	# learns to re-run until it passes instead of reading the output.
+	#
+	# It bit this repo before, too: a deleted git worktree left absolute phar paths in that shared cache,
+	# and `clear-result-cache` was not enough -- the whole directory had to be removed.
+	tmpDir: .phpstan-cache
 	level: 5
 	phpVersion: 70200
 	paths:
