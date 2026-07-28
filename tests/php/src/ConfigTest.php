@@ -114,6 +114,77 @@ class ConfigTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * Hosts that must be treated as local, over plain http.
+	 *
+	 * @return array<string,array{0:string}>
+	 */
+	public function local_host_provider() {
+		return array(
+			'localhost'            => array( 'http://localhost:8888/v1' ),
+			'localhost uppercase'  => array( 'http://LOCALHOST:8888/v1' ),
+			'ipv4 loopback'        => array( 'http://127.0.0.1:8888/v1' ),
+			'ipv6 loopback'        => array( 'http://[::1]:8888/v1' ),
+			'docker host gateway'  => array( 'http://host.docker.internal:8888/v1' ),
+			'trailing root dot'    => array( 'http://host.docker.internal.:8888/v1' ),
+			'uppercase reserved'   => array( 'http://HOST.DOCKER.INTERNAL/v1' ),
+			'dot test'             => array( 'http://my-site.test/v1' ),
+			'docker bridge'        => array( 'http://172.17.0.1:8888/v1' ),
+			'private class a'      => array( 'http://10.0.0.5/v1' ),
+			'private class c'      => array( 'http://192.168.1.10/v1' ),
+			'link local'           => array( 'http://169.254.1.1/v1' ),
+		);
+	}
+
+	/**
+	 * @dataProvider local_host_provider
+	 *
+	 * @param string $endpoint Endpoint to accept.
+	 */
+	public function test_accepts_http_for_local_hosts( $endpoint ) {
+		$this->assertTrue( $this->make_config( array( 'endpoint' => $endpoint ) )->is_valid(), $endpoint );
+	}
+
+	/**
+	 * Hosts that are publicly routable and must NOT get the plain-http carve-out.
+	 *
+	 * Every entry here passed the guard under the old "a hostname with no dot cannot be public" rule.
+	 * They are the reason that rule is gone: each one would have carried an install token in cleartext
+	 * across the internet.
+	 *
+	 * @return array<string,array{0:string}>
+	 */
+	public function public_host_provider() {
+		return array(
+			'ipv6 literal, public'   => array( 'http://[2001:4860:4860::8888]/v1' ),
+			'integer form of 8.8.8.8' => array( 'http://134744072/v1' ),
+			'hex form of 8.8.8.8'    => array( 'http://0x08080808/v1' ),
+			'public ipv4'            => array( 'http://8.8.8.8/v1' ),
+			'single label public tld' => array( 'http://ai/v1' ),
+			'compose service name'   => array( 'http://tests-wordpress/v1' ),
+			'documentation range'    => array( 'http://192.0.2.10/v1' ),
+			'plain public host'      => array( 'http://tracker.example.com/v1' ),
+		);
+	}
+
+	/**
+	 * @dataProvider public_host_provider
+	 *
+	 * @param string $endpoint Endpoint to refuse.
+	 */
+	public function test_refuses_http_for_publicly_routable_hosts( $endpoint ) {
+		$this->assertFalse( $this->make_config( array( 'endpoint' => $endpoint ) )->is_valid(), $endpoint );
+	}
+
+	/**
+	 * https is never affected by the local-host question.
+	 */
+	public function test_accepts_https_for_a_host_that_would_be_refused_over_http() {
+		$config = $this->make_config( array( 'endpoint' => 'https://tests-wordpress/v1' ) );
+
+		$this->assertTrue( $config->is_valid() );
+	}
+
+	/**
 	 * A non-local http endpoint stays rejected even when it merely resembles a dev host (guards
 	 * against an overly loose local-host regex).
 	 */

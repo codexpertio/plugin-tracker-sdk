@@ -205,24 +205,46 @@ class Config {
 			return false;
 		}
 
-		if ( 'localhost' === $host || '127.0.0.1' === $host || '::1' === $host ) {
+		// DNS is case-insensitive and a trailing root dot is legal, so normalise before comparing.
+		// Without this, `host.INTERNAL` and `host.internal.` are refused while `host.internal` is
+		// allowed -- inconsistent, and it fails on a URL a developer typed rather than generated.
+		$host = strtolower( rtrim( $host, '.' ) );
+
+		// Unwrap an IPv6 literal so it can be validated as an address rather than as a name.
+		if ( '[' === substr( $host, 0, 1 ) && ']' === substr( $host, -1 ) ) {
+			$host = substr( $host, 1, -1 );
+		}
+
+		if ( 'localhost' === $host ) {
 			return true;
+		}
+
+		// An IP literal is local only when the address itself is loopback, private or link-local.
+		//
+		// This branch replaced a rule that allowed ANY hostname with no dot in it, on the reasoning
+		// that a single-label name cannot be a public host. That reasoning was wrong three ways, and
+		// each one allowed an install token to cross the public internet in cleartext:
+		//
+		//   http://[2001:4860:4860::8888]/  a bracketed IPv6 literal contains no dot -- Google DNS
+		//   http://134744072/               the integer form of 8.8.8.8, which getaddrinfo accepts
+		//   http://0x08080808/              the hex form of the same address
+		//   http://ai/                      a real single-label public host; several TLDs have apex
+		//                                   A records, so "no dot" does not mean "not routable"
+		//
+		// Docker and compose service names are still reachable without TLS: `host.docker.internal`
+		// and any `*.internal` name match the reserved-TLD branch below, and a container address
+		// matches this one. What is gone is the blanket allowance.
+		if ( false !== filter_var( $host, FILTER_VALIDATE_IP ) ) {
+			// Both flags mean "reject private and reserved". A literal that FAILS that filter is
+			// therefore exactly one that is not publicly routable, which is what makes it local.
+			return false === filter_var( $host, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE );
 		}
 
 		// .test, .local and .localhost are reserved for local use by RFC 6761/6762. .internal was
 		// reserved by ICANN in 2024 for private networks and can never resolve publicly, which is
 		// what Docker's host.docker.internal relies on -- so a developer pointing the SDK straight at
 		// the host gateway is not refused for lacking TLS.
-		if ( 1 === preg_match( '/\.(test|local|localhost|internal)\z/', $host ) ) {
-			return true;
-		}
-
-		// A single-label hostname -- no dot at all -- cannot be a public internet host. It is a
-		// container or compose service name (wp-env resolves its own sibling site as
-		// "tests-wordpress", for instance), or an /etc/hosts entry. Allowing plain http for these is
-		// what makes it possible to point the SDK at a local receiver at all; requiring TLS between
-		// two containers on a developer's laptop would just mean nobody tests the transport.
-		return false === strpos( $host, '.' );
+		return 1 === preg_match( '/\.(test|local|localhost|internal)\z/', $host );
 	}
 
 	/**
