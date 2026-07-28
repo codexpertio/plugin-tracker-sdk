@@ -154,6 +154,39 @@ stopping and re-registering.
 Rule of thumb: **status decides auth and rate limiting; `success` decides application outcome.**
 Neither alone is sufficient.
 
+## Stable error codes
+
+Every refusal from these routes now carries a machine-readable `code` alongside its message, per issue
+#44:
+
+```json
+{ "success": false, "data": { "code": "rate_limited", "message": "Too many requests. Try again later.", "retry_after": 3600 } }
+```
+
+and, for anything a `permission_callback` rejects, as the WP_Error code in the core-shaped envelope:
+
+```json
+{ "code": "unauthenticated", "message": "This install token is not valid.", "data": { "status": 401 } }
+```
+
+| Code | Meaning |
+|---|---|
+| `unauthenticated` | No usable credential, or the one presented is no longer valid. Re-register; do not retry. |
+| `not_owner` | Authenticated, but this project is not accepting the caller's data — disabled, revoked, or not theirs. |
+| `not_found` | No such resource, or none the caller may know about. |
+| `rate_limited` | Too many requests in the window. Honour `Retry-After`. |
+| `invalid_request` | Refused on its merits — malformed, over a bound, inconsistent. Retrying unchanged cannot succeed. |
+| `server_error` | The request was fine and the server could not complete it. Retryable. |
+
+**This is additive and changes nothing an existing client reads.** `success` and `data.message` are
+exactly where they were, which matters because a consumer's bundled copy of this SDK is frozen and
+cannot be updated. A client that keys off `success` and the HTTP status keeps working unchanged; `code`
+is there for one that wants to stop string-matching translated prose.
+
+`Http\Transport` deliberately does **not** branch on `code` — it classifies on status first and
+`success` second, for the reasons in "Response parsing — the trap" above. The code is for consumers and
+for the dashboard, not for the retry decision.
+
 ## Retry and backoff
 
 - Retryable failures only: transport errors, 429, 5xx.
