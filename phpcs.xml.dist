@@ -7,6 +7,13 @@
 	<exclude-pattern>/dist/*</exclude-pattern>
 	<exclude-pattern>/tests/*/fixtures/*</exclude-pattern>
 	<!--
+		bin/ holds standalone CLI utilities that run under `php bin/…`, not inside WordPress. WPCS rules
+		about global-variable prefixes and wrapping filesystem calls in WP_Filesystem exist to protect a
+		WordPress request; neither applies to a build script whose whole job is to read composer.json and
+		write to STDERR. The shipped library is src/, and that is linted in full.
+	-->
+	<exclude-pattern>/bin/*</exclude-pattern>
+	<!--
 		tests/php/utils/ holds deliberately un-namespaced global helper classes, following the house
 		convention (wc-affiliate tests/php/utils/). They are NOT carved out of
 		WordPress.NamingConventions.PrefixAllGlobals: that sniff already reports every file in this

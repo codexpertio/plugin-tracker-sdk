@@ -225,11 +225,11 @@ class Config {
 		// that a single-label name cannot be a public host. That reasoning was wrong three ways, and
 		// each one allowed an install token to cross the public internet in cleartext:
 		//
-		//   http://[2001:4860:4860::8888]/  a bracketed IPv6 literal contains no dot -- Google DNS
-		//   http://134744072/               the integer form of 8.8.8.8, which getaddrinfo accepts
-		//   http://0x08080808/              the hex form of the same address
-		//   http://ai/                      a real single-label public host; several TLDs have apex
-		//                                   A records, so "no dot" does not mean "not routable"
+		// - http://[2001:4860:4860::8888]/ is Google DNS; a bracketed IPv6 literal contains no dot.
+		// - http://134744072/ is the integer form of 8.8.8.8, which getaddrinfo accepts.
+		// - http://0x08080808/ is the hex form of the same address.
+		// - http://ai/ is a real single-label public host. Several TLDs carry apex A records, so
+		// "contains no dot" never meant "not routable"
 		//
 		// Docker and compose service names are still reachable without TLS: `host.docker.internal`
 		// and any `*.internal` name match the reserved-TLD branch below, and a container address
