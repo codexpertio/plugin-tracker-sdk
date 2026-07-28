@@ -126,6 +126,14 @@ class Config {
 			$this->endpoint = rtrim( $args['endpoint'], '/' );
 		}
 
+		// A site-level override, so a developer can point the SDK at a local receiver without editing
+		// the generated snippet -- editing the snippet is how a wrong hash or a stale namespace ends
+		// up committed. Last, so it beats the argument. Still subject to the https check below, which
+		// permits localhost and .test.
+		if ( defined( 'CX_TRACKER_ENDPOINT' ) && is_string( CX_TRACKER_ENDPOINT ) && '' !== CX_TRACKER_ENDPOINT ) {
+			$this->endpoint = rtrim( CX_TRACKER_ENDPOINT, '/' );
+		}
+
 		$this->validate();
 	}
 
@@ -201,7 +209,20 @@ class Config {
 			return true;
 		}
 
-		return (bool) preg_match( '/\.(test|local|localhost)$/', $host );
+		// .test, .local and .localhost are reserved for local use by RFC 6761/6762. .internal was
+		// reserved by ICANN in 2024 for private networks and can never resolve publicly, which is
+		// what Docker's host.docker.internal relies on -- so a developer pointing the SDK straight at
+		// the host gateway is not refused for lacking TLS.
+		if ( 1 === preg_match( '/\.(test|local|localhost|internal)\z/', $host ) ) {
+			return true;
+		}
+
+		// A single-label hostname -- no dot at all -- cannot be a public internet host. It is a
+		// container or compose service name (wp-env resolves its own sibling site as
+		// "tests-wordpress", for instance), or an /etc/hosts entry. Allowing plain http for these is
+		// what makes it possible to point the SDK at a local receiver at all; requiring TLS between
+		// two containers on a developer's laptop would just mean nobody tests the transport.
+		return false === strpos( $host, '.' );
 	}
 
 	/**

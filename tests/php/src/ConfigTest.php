@@ -94,6 +94,26 @@ class ConfigTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * .internal is ICANN-reserved for private networks, and is how a container reaches the host
+	 * gateway (host.docker.internal) to talk to a sibling wp-env site's published port.
+	 */
+	public function test_accepts_http_dot_internal_endpoint() {
+		$config = $this->make_config( array( 'endpoint' => 'http://host.docker.internal:8888/wp-json/plugin-tracker/v1' ) );
+
+		$this->assertTrue( $config->is_valid() );
+	}
+
+	/**
+	 * The carve-out is anchored to the end of the host, so a public host that merely contains a
+	 * reserved label is still refused.
+	 */
+	public function test_rejects_http_host_with_internal_label_not_at_end() {
+		$config = $this->make_config( array( 'endpoint' => 'http://internal.example.com/wp-json/plugin-tracker/v1' ) );
+
+		$this->assertFalse( $config->is_valid() );
+	}
+
+	/**
 	 * A non-local http endpoint stays rejected even when it merely resembles a dev host (guards
 	 * against an overly loose local-host regex).
 	 */

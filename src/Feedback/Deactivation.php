@@ -412,15 +412,21 @@ class Deactivation {
 	 */
 	public function payload( $reason, $note ) {
 		$payload = array(
-			'schema'  => self::SCHEMA,
-			'sdk'     => Tracker::VERSION,
-			'project' => $this->config->project(),
-			'hash'    => $this->config->hash(),
-			'at'      => time(),
+			'schema' => self::SCHEMA,
+			'sdk'    => Tracker::VERSION,
+			'hash'   => $this->config->hash(),
+			'at'     => time(),
 		);
 
 		$payload = array_merge( $payload, $this->site_fields() );
-		$reason  = self::normalize_reason( $reason );
+
+		// `project` is legacy and optional, so it is included ONLY when the consumer actually set it.
+		// Transmitting an empty string on every request is worse than omitting the key: it looks like
+		// data, and it invites ingestion to treat a field that is almost always blank as meaningful.
+		if ( '' !== $this->config->project() ) {
+			$payload['project'] = $this->config->project();
+		}
+		$reason = self::normalize_reason( $reason );
 
 		if ( '' !== $reason ) {
 			$payload['reason'] = $reason;
