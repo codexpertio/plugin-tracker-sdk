@@ -85,6 +85,18 @@ class Config {
 	private $errors = array();
 
 	/**
+	 * The consumer plugin's own header, parsed once.
+	 *
+	 * Null until read. Populated from `file`, and used for two jobs at once: deriving whatever the
+	 * consumer did not pass explicitly, and confirming the path really is a main plugin file. Those were
+	 * separate file reads before; the header is small and reading it twice per request for one plugin is
+	 * waste that scales with the number of plugins on the site.
+	 *
+	 * @var array|null
+	 */
+	private $header = null;
+
+	/**
 	 * A non-secret project id looks like pt_proj_<hex>. Enforced so that an author who pastes
 	 * their SECRET here by mistake is told, rather than shipping it to WordPress.org inside
 	 * their plugin. That mistake is the single worst failure mode in this SDK's threat model
@@ -134,7 +146,132 @@ class Config {
 			$this->endpoint = rtrim( CX_TRACKER_ENDPOINT, '/' );
 		}
 
+		// Anything the consumer did not pass is taken from the plugin header. Explicit arguments still
+		// win, so an integration that passes all three keeps behaving exactly as it did.
+		$this->derive_from_header();
+
 		$this->validate();
+	}
+
+	/**
+	 * Fill in slug, name and version from the plugin header.
+	 *
+	 * ## Why this exists
+	 *
+	 * `plugin`, `name` and `version` are facts WordPress already holds about the consumer's plugin, in the
+	 * header of the very file they are required to pass as `file`. Asking for them again made the snippet
+	 * four lines longer and introduced three ways to be wrong -- most damagingly `version`, which a
+	 * consumer must remember to bump in TWO places or the SDK reports a version that is not the one
+	 * running, and the `version` lifecycle event fires for a change that already happened.
+	 *
+	 * ## Why not get_plugin_data() unconditionally
+	 *
+	 * `get_plugin_data()` lives in wp-admin/includes/plugin.php, which is NOT loaded on a front-end
+	 * request or during cron -- and this runs at file scope on every request. Calling it directly would
+	 * fatal for most of a site's traffic.
+	 *
+	 * So it is used when it is already available, and `get_file_data()` otherwise: that is the
+	 * wp-includes function `get_plugin_data()` itself delegates to, so both paths parse the header the
+	 * same way, and neither is a hand-rolled regex over somebody's source file.
+	 *
+	 * Note the `false` arguments: no markup, and no translation. Translating a plugin header this early
+	 * makes WordPress load the text domain just-in-time and warn on every request since 6.7 -- the same
+	 * trap the snippet's `name` argument documents.
+	 *
+	 * @return void
+	 */
+	private function derive_from_header() {
+
+		if ( '' === $this->file ) {
+			return;
+		}
+
+		if ( '' !== $this->plugin && '' !== $this->name && '' !== $this->version ) {
+			return;
+		}
+
+		$header = $this->header();
+
+		if ( '' === $this->version && isset( $header['Version'] ) ) {
+			$this->version = (string) $header['Version'];
+		}
+
+		if ( '' === $this->name && isset( $header['Name'] ) ) {
+			$this->name = trim( (string) $header['Name'] );
+		}
+
+		if ( '' === $this->plugin ) {
+			$this->plugin = $this->derive_slug();
+		}
+	}
+
+	/**
+	 * The slug this plugin reports under.
+	 *
+	 * NOT in the header -- WordPress has no slug field -- so it comes from the path, which is the same
+	 * thing WordPress.org uses: the plugin's own directory name. A single-file plugin has no directory,
+	 * so its filename stands in.
+	 *
+	 * Lowercased and stripped of anything outside the slug shape, because a directory name is whatever
+	 * the author or the installer chose and may carry capitals or underscores. The result is validated
+	 * against SLUG_PATTERN like any other, so an underived-able path still produces a clear error rather
+	 * than a silently wrong slug.
+	 *
+	 * @return string
+	 */
+	private function derive_slug() {
+
+		$basename = $this->basename();
+		$dir      = dirname( $basename );
+
+		$slug = ( '.' === $dir || '' === $dir ) ? basename( $basename, '.php' ) : $dir;
+
+		$slug = strtolower( $slug );
+		$slug = preg_replace( '/[^a-z0-9-]+/', '-', $slug );
+		$slug = trim( (string) $slug, '-' );
+
+		return (string) $slug;
+	}
+
+	/**
+	 * The plugin header, read once.
+	 *
+	 * @return array
+	 */
+	private function header() {
+
+		if ( null !== $this->header ) {
+			return $this->header;
+		}
+
+		$this->header = array();
+
+		if ( '' === $this->file || ! is_readable( $this->file ) ) {
+			return $this->header;
+		}
+
+		// Already loaded -- an admin request, or a consumer that included it. Use WordPress's own
+		// reader, with markup and translation both off.
+		if ( function_exists( 'get_plugin_data' ) ) {
+			$this->header = (array) get_plugin_data( $this->file, false, false );
+
+			return $this->header;
+		}
+
+		// The front-end and cron path. get_file_data() is in wp-includes and is what get_plugin_data()
+		// calls internally, so the parsing is identical -- only the surrounding conveniences differ.
+		if ( function_exists( 'get_file_data' ) ) {
+			$this->header = (array) get_file_data(
+				$this->file,
+				array(
+					'Name'    => 'Plugin Name',
+					'Version' => 'Version',
+				),
+				'plugin'
+			);
+		}
+
+		return $this->header;
 	}
 
 	/**
@@ -153,12 +290,22 @@ class Config {
 				. 'non-secret. Never put a secret here -- it would be published inside your plugin.';
 		}
 
+		/*
+		 * Both of these are DERIVED from the plugin header when not supplied, so reaching an error here
+		 * means the header could not be read or produced nothing usable -- which a consumer can fix
+		 * either by correcting the header or by passing the value explicitly. The messages say so,
+		 * because "plugin must be a lowercase slug" is unhelpful advice about an argument the consumer
+		 * never wrote.
+		 */
 		if ( 1 !== preg_match( self::SLUG_PATTERN, $this->plugin ) ) {
-			$this->errors[] = 'plugin must be a lowercase slug, e.g. my-plugin';
+			$this->errors[] = 'plugin must be a lowercase slug, e.g. my-plugin. It is derived from your '
+				. "plugin's directory name when not supplied, so either rename the directory or pass "
+				. '`plugin` explicitly.';
 		}
 
 		if ( '' === $this->version ) {
-			$this->errors[] = 'version is required';
+			$this->errors[] = 'version could not be read from your plugin header. Add a `Version:` line '
+				. 'to the file you passed as `file`, or pass `version` explicitly.';
 		}
 
 		if ( 1 !== preg_match( self::HASH_PATTERN, $this->hash ) ) {
@@ -362,10 +509,27 @@ class Config {
 			return true;
 		}
 
-		// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading the first 8KB of a LOCAL plugin file to check for a plugin header; wp_remote_get() is for URLs and WP_Filesystem is not loaded this early.
-		$head = (string) file_get_contents( $this->file, false, null, 0, 8192 );
+		$header = $this->header();
 
-		return 1 === preg_match( '/^[\s\*\/#@]*Plugin Name\s*:/mi', $head );
+		// A parsed header with a Name is the same evidence the old hand-rolled regex looked for, but it
+		// comes from the read this class already does for the derived fields rather than a second one.
+		if ( ! empty( $header['Name'] ) ) {
+			return true;
+		}
+
+		/*
+		 * No Name, and neither WordPress reader was available -- which happens in a unit test that
+		 * constructs Config without WordPress loaded. Fall back to looking at the file directly rather
+		 * than failing a consumer whose header is fine.
+		 */
+		if ( ! function_exists( 'get_file_data' ) && ! function_exists( 'get_plugin_data' ) ) {
+			// phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents -- reading the first 8KB of a LOCAL plugin file; wp_remote_get() is for URLs and WP_Filesystem is not loaded this early.
+			$head = (string) file_get_contents( $this->file, false, null, 0, 8192 );
+
+			return 1 === preg_match( '/^[\s\*\/#@]*Plugin Name\s*:/mi', $head );
+		}
+
+		return false;
 	}
 
 	/**

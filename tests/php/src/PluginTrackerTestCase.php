@@ -16,6 +16,7 @@ use Codexpert\PluginTracker\Storage\Queue;
 use Codexpert\PluginTracker\Tracker;
 use PHPUnit\Framework\TestCase as PHPUnitTestCase;
 use PluginTracker_Test_Option_Store;
+use PluginTracker_Test_Plugin_Header;
 
 /**
  * Base test case for the whole suite. No WordPress install is loaded anywhere -- every WP
@@ -73,6 +74,16 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 		Functions\when( 'determine_locale' )->justReturn( 'en_US' );
 		Functions\when( 'is_textdomain_loaded' )->justReturn( false );
 		Functions\when( 'load_textdomain' )->justReturn( false );
+
+		/*
+		 * Config::header() and Config::basename() both branch on function_exists() for these two, so
+		 * they are stubbed HERE rather than in the tests that care. Brain Monkey patches process-wide:
+		 * stubbing either one inside a single test would flip those guards for the whole suite and make
+		 * Config take a different derivation path depending on test order. Faithful ports, so the
+		 * fixture files genuinely drive the result -- see PluginTracker_Test_Plugin_Header.
+		 */
+		Functions\when( 'get_file_data' )->alias( array( PluginTracker_Test_Plugin_Header::class, 'get_file_data' ) );
+		Functions\when( 'plugin_basename' )->alias( array( PluginTracker_Test_Plugin_Header::class, 'plugin_basename' ) );
 
 		// Default to absent. Transport reads the Retry-After header on every response, so an
 		// unstubbed default here fails every transport test rather than only the rate-limit ones.

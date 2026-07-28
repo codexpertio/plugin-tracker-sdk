@@ -194,13 +194,127 @@ class ConfigTest extends PluginTrackerTestCase {
 		$this->assertFalse( $config->is_valid() );
 	}
 
-	/**
-	 * A missing plugin slug is invalid.
+	/*
+	 * Deriving plugin data from the header.
+	 *
+	 * `plugin`, `name` and `version` are facts WordPress already holds in the header of the file the
+	 * consumer must pass as `file`. Asking for them again made the snippet longer and gave three more
+	 * ways to be wrong -- most damagingly `version`, which had to be bumped in two places or the SDK
+	 * reported a version that was not the one running.
 	 */
-	public function test_rejects_missing_plugin_slug() {
+
+	/**
+	 * An omitted slug is DERIVED from the plugin's directory, not rejected.
+	 *
+	 * The directory name is what WordPress.org uses as a slug, so it is the same answer a consumer would
+	 * have typed. No file read is needed for this one -- the path alone carries it.
+	 */
+	public function test_derives_the_slug_from_the_plugin_directory() {
 		$config = $this->make_config( array( 'plugin' => '' ) );
 
+		$this->assertTrue( $config->is_valid(), implode( ' | ', $config->errors() ) );
+		$this->assertSame( 'my-plugin', $config->plugin() );
+	}
+
+	/**
+	 * A single-file plugin has no directory, so its filename stands in.
+	 *
+	 * Path-only: no file is read for a slug, because WordPress has no slug HEADER -- the directory
+	 * name is the slug, which is the same thing WordPress.org keys on.
+	 */
+	public function test_derives_the_slug_from_a_single_file_plugin_name() {
+		$config = $this->make_config(
+			array(
+				'plugin' => '',
+				'file'   => '/wp-content/plugins/hello-dolly.php',
+			)
+		);
+
+		$this->assertTrue( $config->is_valid(), implode( ' | ', $config->errors() ) );
+		$this->assertSame( 'hello-dolly', $config->plugin() );
+	}
+
+	/**
+	 * A directory whose name is not slug-shaped is normalised rather than passed through.
+	 *
+	 * A directory name is whatever the author or the installer chose, so it may carry capitals or
+	 * underscores; the slug it produces still has to satisfy SLUG_PATTERN.
+	 */
+	public function test_normalises_a_slug_derived_from_an_awkward_directory() {
+		$config = $this->make_config(
+			array(
+				'plugin' => '',
+				'file'   => '/wp-content/plugins/Acme_Widgets/acme.php',
+			)
+		);
+
+		$this->assertTrue( $config->is_valid(), implode( ' | ', $config->errors() ) );
+		$this->assertSame( 'acme-widgets', $config->plugin() );
+	}
+
+	/**
+	 * Name and version come out of the header when the file can actually be read.
+	 */
+	public function test_derives_name_and_version_from_the_plugin_header() {
+		$config = $this->make_config(
+			array(
+				// Pinned, because this fixture deliberately does NOT live under a plugins directory --
+				// slug derivation is covered by the path-only tests above.
+				'plugin'  => 'acme-widgets',
+				'name'    => '',
+				'version' => '',
+				'file'    => self::fixture( 'acme-widgets.php' ),
+			)
+		);
+
+		$this->assertTrue( $config->is_valid(), implode( ' | ', $config->errors() ) );
+		$this->assertSame( 'Acme Widgets', $config->name() );
+		$this->assertSame( '2.4.1', $config->version() );
+	}
+
+	/**
+	 * An explicit argument still wins.
+	 *
+	 * This is what keeps every already-shipped integration working: the SDK is bundled and frozen inside
+	 * third-party plugins, all of which pass these three explicitly. Derivation is a fallback, never an
+	 * override.
+	 */
+	public function test_explicit_arguments_beat_the_header() {
+		$config = $this->make_config(
+			array(
+				'plugin'  => 'chosen-slug',
+				'name'    => 'Chosen Name',
+				'version' => '9.9.9',
+				'file'    => self::fixture( 'acme-widgets.php' ),
+			)
+		);
+
+		$this->assertSame( 'chosen-slug', $config->plugin() );
+		$this->assertSame( 'Chosen Name', $config->name() );
+		$this->assertSame( '9.9.9', $config->version() );
+	}
+
+	/**
+	 * A file with no readable header still fails, and says what to do about it.
+	 *
+	 * Derivation must not turn a real misconfiguration into a silent success -- a consumer who passed a
+	 * class file instead of their main plugin file needs to hear so.
+	 */
+	public function test_still_reports_a_version_it_cannot_derive() {
+		$config = $this->make_config( array( 'version' => '' ) );
+
 		$this->assertFalse( $config->is_valid() );
+		$this->assertStringContainsString( 'Version:', implode( ' ', $config->errors() ) );
+	}
+
+	/**
+	 * Absolute path to a fixture plugin file.
+	 *
+	 * @param string $name File name.
+	 * @return string
+	 */
+	private static function fixture( $name ) {
+		return dirname( __DIR__ ) . '/fixtures/' . $name;
 	}
 
 	/**

@@ -43,10 +43,7 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 			$my_plugin_tracker = \CxTrackerSdk_v1_0_0_92521f\Tracker::init(
 				array(
 					'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87', // dashboard-issued, public
-					'plugin'  => 'my-plugin',
-					'name'    => 'My Plugin',
-					'version' => '1.4.2',
-					'file'    => __FILE__, // required: the MAIN plugin file, see docs/SNIPPET.md
+					'file'    => __FILE__, // the MAIN plugin file, see docs/SNIPPET.md
 					'enabled' => true,     // consent gate 1: you, the author, enable it
 				)
 			);
@@ -63,10 +60,14 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
 The moment `init()` succeeds, the SDK registers its own `register_activation_hook()`,
 `register_deactivation_hook()` and `init` listeners, and raises `install`, `activate`, `version`,
-`compat` and `deactivation` itself. `file` must be the plugin's own main file --
-`register_activation_hook()` keys on `plugin_basename( $file )`, so a class file or an include
-computes a basename WordPress never fires, and those hooks silently never run: nothing errors, data
-just never arrives.
+`compat` and `deactivation` itself.
+
+`file` must be the plugin's own main file, and it does two jobs. It is what
+`register_activation_hook()` keys on -- pass a class file or an include and the computed basename is
+one WordPress never fires, so those hooks silently never run: nothing errors, data just never
+arrives. It is also where the SDK **reads the plugin's slug, name and version from**, so those are
+not arguments you pass or remember to keep in sync. See [docs/SNIPPET.md](docs/SNIPPET.md#identity)
+for how each is derived and when you would still override one.
 
 The only thing left to call yourself is a named feature, because only you know what your features are:
 

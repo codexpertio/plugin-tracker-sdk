@@ -17,13 +17,13 @@ The plugin author passes `enabled` in the array given to `Tracker::init()`:
 ```php
 Tracker::init( array(
 	'hash'    => 'a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4', // dashboard-issued, public; from the pasted snippet
-	'plugin'  => 'my-plugin',
-	'name'    => 'My Plugin',   // shown in the prompt; omit and the slug is prettified
-	'version' => '2.4.1',
-	'file'    => __FILE__,      // required: the MAIN plugin file -- see docs/SNIPPET.md
-	'enabled' => true, // Gate 1
+	'file'    => __FILE__, // the MAIN plugin file; also the source of the name shown in the prompt
+	'enabled' => true,     // Gate 1
 ) );
 ```
+
+The name the prompt shows an administrator is read from that file's `Plugin Name:` header, not passed
+here — see [`SNIPPET.md`](SNIPPET.md#identity). It can still be overridden with an explicit `name`.
 
 In practice a consumer does not type this call by hand -- the dashboard generates it as part of the pasted
 snippet described in [`SNIPPET.md`](SNIPPET.md), and `hash`/`file` are validated as required by `Config`. It is

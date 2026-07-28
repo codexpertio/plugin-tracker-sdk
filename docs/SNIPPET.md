@@ -27,9 +27,6 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 			$my_plugin_tracker = \CxTrackerSdk_v1_0_0_92521f\Tracker::init(
 				array(
 					'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87',
-					'plugin'  => 'my-plugin',
-					'name'    => 'My Plugin',
-					'version' => '1.4.2',
 					'file'    => __FILE__,
 					'enabled' => true,
 				)
@@ -65,6 +62,40 @@ deactivation hooks itself, and `register_activation_hook()` keys on `plugin_base
 Passed an include or a class file, it computes a basename WordPress never fires — the hooks silently
 never run, nothing errors, and data simply never arrives. `Config` therefore checks that the file
 carries a `Plugin Name:` header and refuses the config otherwise.
+
+<a id="identity"></a>
+
+## Identity comes from the plugin header
+
+`plugin`, `name` and `version` are **not** arguments. WordPress already knows all three — they are in
+the header of the very file passed as `file` — so the SDK reads them there:
+
+| Value | Where it comes from | Example |
+|---|---|---|
+| `version` | The header's `Version:` line | `Version: 1.4.2` → `1.4.2` |
+| `name` | The header's `Plugin Name:` line | `Plugin Name: My Plugin` → `My Plugin` |
+| `plugin` (slug) | The plugin's own directory name, lowercased and slugified; for a single-file plugin, its filename | `plugins/my-plugin/my-plugin.php` → `my-plugin` |
+
+There is no `Slug:` header in WordPress, so the slug comes from the path — which is the same thing
+WordPress.org keys on, and therefore the same answer an author would have typed.
+
+Version was the argument that most deserved to go. It had to be bumped in *two* places on every
+release, and forgetting the second meant the SDK reported a version that was not the one running —
+and fired the `version` lifecycle event late, for an upgrade that had already happened.
+
+**Reading the header is done the way WordPress does it**, never with a regex over the author's
+source. `get_plugin_data()` is used when it is already loaded, and `get_file_data()` — the
+`wp-includes` function `get_plugin_data()` itself delegates to — otherwise. That fallback matters:
+`get_plugin_data()` lives in `wp-admin/includes/plugin.php`, which is *not* loaded on a front-end
+request or during cron, and this snippet runs at file scope on every request. Translation is
+explicitly off, because translating a header this early makes WordPress load the text domain
+just-in-time and warn on every request since 6.7.
+
+**You can still pass any of the three explicitly, and an explicit value always wins.** Two reasons to:
+the reporting slug must differ from the directory name (a directory a user renamed, or a plugin whose
+WordPress.org slug does not match its folder), or the plugin is distributed in a shape where the
+header is not the source of truth. Every already-shipped integration that passes all three keeps
+working unchanged — derivation is a fallback, never an override.
 
 **Above the author's own bootstrap.** So the activation hook is registered before anything else can
 short-circuit, and so `init` listeners are in place for the first request.
