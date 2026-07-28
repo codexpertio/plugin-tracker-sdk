@@ -98,6 +98,12 @@ class Notice {
 
 		$defaults = array(
 			'intro'    => __( 'can send anonymous usage data to help its developers decide what to build and which versions to support.', 'plugin-tracker-sdk' ),
+			// Says it is a beta, and says what that means for the reader rather than just labelling it.
+			// Issue #40 is "consent (opt-in beta)" and PLANS.md §11.E calls the programme a beta with
+			// "supported beta events" -- so what is collected can change, which is material to the
+			// decision being asked for. A bare "(beta)" badge would be decoration; this is the
+			// consequence.
+			'beta'     => __( 'This is a beta programme: what is collected may change, and you will be asked again if it does.', 'plugin-tracker-sdk' ),
 			'sends'    => __( 'It would send: an anonymous install ID, the plugin version, your WordPress and PHP versions, your site language, whether this is a multisite, and which features are used.', 'plugin-tracker-sdk' ),
 			'never'    => __( 'It never sends your site address, email address, user accounts, or any content.', 'plugin-tracker-sdk' ),
 			'optional' => __( 'Nothing is sent unless you agree. You can change your mind at any time.', 'plugin-tracker-sdk' ),
@@ -145,6 +151,7 @@ class Notice {
 				<strong><?php echo esc_html( (string) $text['never'] ); ?></strong>
 			</p>
 			<p><?php echo esc_html( (string) $text['optional'] ); ?></p>
+			<p><em><?php echo esc_html( (string) $text['beta'] ); ?></em></p>
 			<form method="post" action="<?php echo esc_url( $action ); ?>" style="display:inline">
 				<?php wp_nonce_field( 'cx_tracker_consent_' . $this->config->plugin() ); ?>
 				<input type="hidden" name="action" value="cx_tracker_consent_<?php echo esc_attr( $this->config->plugin() ); ?>">

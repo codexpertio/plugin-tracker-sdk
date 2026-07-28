@@ -69,7 +69,10 @@ class ContractTest extends PluginTrackerTestCase {
 	 * an admin's stored agreement is checked against.
 	 */
 	public function test_consent_policy_is_frozen_at_one() {
-		$this->assertSame( 1, Gate::POLICY );
+		// 2, not 1: the notice now states that this is a beta and that what is collected may change.
+		// That is a material wording change, so the version had to move -- which is exactly what makes a
+		// previously-recorded agreement stop counting.
+		$this->assertSame( 2, Gate::POLICY );
 	}
 
 	/**

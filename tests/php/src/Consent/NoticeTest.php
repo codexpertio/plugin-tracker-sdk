@@ -167,6 +167,58 @@ class NoticeTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * The prompt must say this is a beta, and say what that means.
+	 *
+	 * Issue #40 is "consent (opt-in beta)" and PLANS.md §11.E calls the programme a beta with "supported
+	 * beta events" -- so the event set, the retention window and the endpoints may still change. An
+	 * administrator being asked to share data should be told that, and for a while the notice did not say
+	 * it at all.
+	 *
+	 * Its own test rather than one more assertion in the string sweep, because this is a compliance
+	 * statement rather than a default value: if somebody trims the copy, this should fail with a reason
+	 * attached.
+	 */
+	public function test_the_prompt_discloses_that_the_programme_is_a_beta() {
+		$config  = $this->make_config( array( 'enabled' => true ) );
+		$consent = new Gate( $config );
+		$notice  = new Notice( $config, $consent );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+
+		ob_start();
+		$notice->render();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'beta', $output, 'the prompt must say the programme is a beta' );
+		$this->assertStringContainsString(
+			'what is collected may change',
+			$output,
+			'and must say what being a beta means for the reader, not just carry the label'
+		);
+	}
+
+	/**
+	 * The policy version must move whenever that disclosure changes.
+	 *
+	 * Gate::POLICY is what makes a stale agreement stop counting. Adding the beta statement was a
+	 * material wording change, so a site that agreed under policy 1 has not agreed to this text -- and
+	 * must be asked again.
+	 */
+	public function test_a_consent_recorded_under_the_pre_beta_policy_no_longer_counts() {
+		$config  = $this->make_config( array( 'enabled' => true ) );
+		$consent = new Gate( $config );
+
+		// Policy 1 is the wording that did not mention the beta.
+		$this->seed_consent( $config, 1, true );
+
+		$this->assertFalse(
+			$consent->granted(),
+			'an agreement to the pre-beta wording must not count as consent to the current wording'
+		);
+	}
+
+	/**
 	 * The prompt copy is filterable (cx_tracker_notice_strings) so a consumer can localise it in
 	 * their own text domain -- see the docblock on Notice::strings(). With no filter registered
 	 * (PluginTrackerTestCase::stub_filters() defaults apply_filters() to a plain pass-through, the
@@ -188,6 +240,7 @@ class NoticeTest extends PluginTrackerTestCase {
 		$this->assertStringContainsString( 'anonymous install ID', $output, 'default sends string' );
 		$this->assertStringContainsString( 'It never sends your site address', $output, 'default never string' );
 		$this->assertStringContainsString( 'Nothing is sent unless you agree', $output, 'default optional string' );
+		$this->assertStringContainsString( 'This is a beta programme', $output, 'default beta string' );
 		$this->assertStringContainsString( '<button>Allow</button>', $output, 'default allow button label' );
 		$this->assertStringContainsString( '<button>No thanks</button>', $output, 'default decline button label' );
 	}

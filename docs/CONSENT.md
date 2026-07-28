@@ -50,6 +50,16 @@ array( 'opted_in' => true, 'policy' => Gate::POLICY, 'at' => time() )
 - `opted_in` is truthy, and
 - the stored `policy` matches the **current** `Gate::POLICY` constant.
 
+### Policy history
+
+Bumping `Gate::POLICY` is not free: it re-prompts every site that had already agreed. So each bump is
+recorded here with what changed and why it was material.
+
+| Version | Change |
+|---|---|
+| 1 | The original wording. |
+| 2 | States that this is a **beta programme** and that what is collected may change. Issue #40 is "consent (opt-in beta)" and PLANS.md §11.E calls it "Telemetry beta" with "supported beta events" — so the event set, the retention window and the endpoints are all still subject to change, which is material to the decision an administrator is being asked to make. Bumped while the SDK was still unreleased, deliberately: the re-prompt cost nothing then and would have cost every consumer's users a fresh prompt afterwards. |
+
 ### Why an old policy version doesn't carry forward
 
 `Gate::POLICY` is a version number for the consent *text* — what the admin was actually told before

@@ -25,8 +25,19 @@ class Gate {
 	/**
 	 * Which consent text the admin agreed to. Bump when the wording materially changes, so a
 	 * stale agreement is detectable rather than assumed to still hold.
+	 *
+	 * History, because a bump is not free -- it re-prompts every site that had already agreed:
+	 *
+	 *   1: the original wording.
+	 *   2: says the programme is a beta. Issue #40 is "consent (opt-in beta)" and PLANS.md §11.E
+	 *      calls it "Telemetry beta" with "supported beta events" -- so the event set, the retention
+	 *      window and the endpoints may still change. An administrator deciding whether to share
+	 *      data should be told that, and the notice did not say it.
+	 *
+	 * Bumped to 2 while the SDK is unreleased, deliberately: the re-prompt costs nothing today and
+	 * would cost every consumer's users a fresh prompt after publication.
 	 */
-	const POLICY = 1;
+	const POLICY = 2;
 
 	/**
 	 * Config.
