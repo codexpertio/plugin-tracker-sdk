@@ -670,6 +670,7 @@ class Deactivation {
 			'field_locale'       => __( 'Site language', 'plugin-tracker-sdk' ),
 			'field_multisite'    => __( 'Multisite', 'plugin-tracker-sdk' ),
 			'field_hash'         => __( 'Plugin identifier', 'plugin-tracker-sdk' ),
+			'field_project'      => __( 'Project identifier', 'plugin-tracker-sdk' ),
 			'field_reason'       => __( 'The reason you pick above', 'plugin-tracker-sdk' ),
 			'yes'                => __( 'Yes', 'plugin-tracker-sdk' ),
 			'no'                 => __( 'No', 'plugin-tracker-sdk' ),
@@ -887,6 +888,10 @@ class Deactivation {
 								<li><?php echo esc_html( (string) $text['field_locale'] ); ?>: <code><?php echo esc_html( (string) $fields['locale'] ); ?></code></li>
 								<li><?php echo esc_html( (string) $text['field_multisite'] ); ?>: <code><?php echo esc_html( $fields['multisite'] ? (string) $text['yes'] : (string) $text['no'] ); ?></code></li>
 								<li><?php echo esc_html( (string) $text['field_hash'] ); ?>: <code><?php echo esc_html( $this->config->hash() ); ?></code></li>
+								<?php /* Only when the consumer actually set a project, matching payload()'s own condition -- listing a field that will not be sent is as wrong as sending one that is not listed. */ ?>
+								<?php if ( '' !== $this->config->project() ) : ?>
+									<li><?php echo esc_html( (string) $text['field_project'] ); ?>: <code><?php echo esc_html( $this->config->project() ); ?></code></li>
+								<?php endif; ?>
 								<li><?php echo esc_html( (string) $text['field_reason'] ); ?></li>
 								<li><?php echo esc_html( (string) $text['disclosure_note'] ); ?></li>
 							</ul>

@@ -5,11 +5,17 @@
 # analysed -- tests/ exercise WP behaviour through Brain Monkey mocks, which is a PHPUnit
 # concern, not a static-analysis one.
 #
-# phpVersion is pinned to 70200 to match the SDK's distribution floor (composer.json
-# config.platform.php = 7.2.5). This is a distribution decision, not a preference: the SDK
-# ships inside third-party WordPress plugins, so its floor becomes theirs. Do not raise this to
-# match plugins/plugin-tracker (which targets 7.4) -- that package is not bundled elsewhere and
-# has no reason to share this SDK's floor.
+# phpVersion is pinned to 70200 -- the SDK's distribution floor, from composer.json's
+# require.php. This is a distribution decision, not a preference: the SDK ships inside
+# third-party WordPress plugins, so its floor becomes theirs. Do not raise this to match
+# plugins/plugin-tracker (which targets 7.4) -- that package is not bundled elsewhere and has no
+# reason to share this SDK's floor.
+#
+# Note this NO LONGER equals composer.json's config.platform.php, which is 7.4. That pin governs
+# dependency resolution and applies to dev tooling as well, and PHPStan 2.x requires PHP >=7.4 to
+# run -- so a 7.2.5 platform pin made the analyser un-upgradable while protecting nothing that
+# ships. `phpVersion` here, testVersion 7.2- in phpcs.xml.dist, and bin/check-floor.php are what
+# hold the real floor now. See the _platform_note in composer.json.
 #
 # No `includes:` for any extension.neon here. phpstan/extension-installer is only *allow-listed*
 # in composer.json's config.allow-plugins, it is not actually required as a dependency, so

@@ -218,6 +218,33 @@ echo "==> Scoped namespace: ${NEW_NAMESPACE}   (was: ${OLD_NAMESPACE})"
 echo "==> Output directory: ${OUT_DIR}"
 
 # ---------------------------------------------------------------------------------------------
+# VERIFY #0: the distribution PHP floor, BEFORE anything is built.
+#
+# VERIFY #2 runs `php -l` and VERIFY #3 loads the classes -- both on whatever PHP the build box
+# happens to have, which is currently 8.5. A `match`, an arrow function or a `?->` in src/ passes
+# both of those and then fatals on a consumer running 7.2. The only thing in this repo that knows
+# about the floor is phpstan.neon (phpVersion: 70200), and the artifact producer was not running it.
+#
+# So it runs here, and a failure aborts the build rather than shipping something that cannot load.
+# Skipped with a loud warning when phpstan is absent (a consumer building from a dist tarball has no
+# dev dependencies), because refusing to build at all in that case would be worse.
+# ---------------------------------------------------------------------------------------------
+if [[ -x "${ROOT_DIR}/vendor/bin/phpstan" ]]; then
+	echo "==> Verifying the documented PHP floor (phpstan.neon phpVersion) before building..."
+
+	if ! ( cd "${ROOT_DIR}" && vendor/bin/phpstan analyse --no-progress --memory-limit=1G >/dev/null 2>&1 ); then
+		echo "error: static analysis fails against the distribution PHP floor -- refusing to build." >&2
+		echo "       Run 'composer analyze' to see what would break on a consumer's older PHP." >&2
+		exit 1
+	fi
+
+	echo "    floor check passed"
+else
+	echo "==> WARNING: phpstan not installed, skipping the PHP floor check." >&2
+	echo "             The artifact may contain syntax newer than the documented floor." >&2
+fi
+
+# ---------------------------------------------------------------------------------------------
 # Idempotent: wipe only this prefix's own output directory before regenerating it. Re-running
 # the script with the same (or auto-derived, same-version) arguments reproduces byte-identical
 # output; it does not touch any other version's build that might already sit under dist/.

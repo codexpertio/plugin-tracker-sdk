@@ -35,7 +35,12 @@ build_at_version() {
 	local stage="${WORK}/pkg-${version}"
 
 	mkdir -p "${stage}"
-	cp -R "${ROOT_DIR}/src" "${ROOT_DIR}/bin" "${ROOT_DIR}/LICENSE" "${stage}/"
+	# languages/ is copied too, and its absence is why this whole test was vacuous: build-dist.sh
+	# refuses to build without it ("languages is missing; refusing to build an untranslatable
+	# artifact"), and it refuses AFTER writing dist/<prefix>/src but BEFORE running any of its three
+	# verifications. So every run of this script loaded a half-built artifact and reported PASS while
+	# proving nothing.
+	cp -R "${ROOT_DIR}/src" "${ROOT_DIR}/bin" "${ROOT_DIR}/languages" "${ROOT_DIR}/LICENSE" "${stage}/"
 
 	# Vary the version so the two builds are genuinely different releases, not the same one twice.
 	sed -i.bak -E "s/const VERSION = '[^']+'/const VERSION = '${version}'/" "${stage}/src/Tracker.php"
@@ -47,8 +52,27 @@ build_at_version() {
 		perl -0pi -e "s/(\tpublic function consent\(\) \{)/\tpublic function only_in_v2() {\n\t\treturn 'v2';\n\t}\n\n\$1/" "${stage}/src/Tracker.php"
 	fi
 
-	( cd "${stage}" && bash bin/build-dist.sh >/dev/null 2>&1 )
-	find "${stage}/dist" -maxdepth 1 -mindepth 1 -type d
+	# Failure is fatal, and its output is kept.
+	#
+	# It used to be `>/dev/null 2>&1` inside a $( ) command substitution, which hid the abort twice
+	# over: the message went nowhere, and bash's errexit does not propagate out of a command
+	# substitution used in an assignment -- so a failed build still let `find` return the directory and
+	# the caller carried on with a partial artifact.
+	if ! ( cd "${stage}" && bash bin/build-dist.sh >"${stage}/build.log" 2>&1 ); then
+		echo "FAIL: build-dist.sh failed for ${version}; last 20 lines:" >&2
+		tail -20 "${stage}/build.log" >&2
+		exit 1
+	fi
+
+	local built
+	built="$(find "${stage}/dist" -maxdepth 1 -mindepth 1 -type d)"
+
+	if [ -z "${built}" ]; then
+		echo "FAIL: build-dist.sh produced no dist directory for ${version}" >&2
+		exit 1
+	fi
+
+	printf '%s' "${built}"
 }
 
 DIST_A="$(build_at_version 1.0.0)"

@@ -44,7 +44,7 @@
         "wp-coding-standards/wpcs": "^3.3",
         "dealerdirect/phpcodesniffer-composer-installer": "^1.2",
         "phpcompatibility/php-compatibility": "^9.3",
-        "phpstan/phpstan": "^1.12",
+        "phpstan/phpstan": "^2.2",
         "php-stubs/wordpress-stubs": "^6.5"
     },
     "scripts": {
@@ -53,13 +53,29 @@
         "lint": "phpcs -p -s",
         "lint:fix": "phpcbf -p",
         "analyze": "phpstan analyse --memory-limit=1G",
+        "check-floor": "php bin/check-floor.php",
         "dist": "bash bin/build-dist.sh",
         "makepot": "wp i18n make-pot . languages/plugin-tracker-sdk.pot --slug=plugin-tracker-sdk --domain=plugin-tracker-sdk --exclude=tests,vendor,dist,bin,docs --ignore-domain",
         "verify-collision": "bash bin/verify-collision.sh"
     },
     "config": {
+        "_platform_note": [
+            "7.4, not the SDK's 7.2 distribution floor. The pin exists to make dependency resolution",
+            "deterministic, and it applies to dev tooling too -- PHPStan 2.x requires PHP >=7.4 to RUN,",
+            "so a 7.2.5 pin made the analyser un-upgradable while doing nothing for what ships.",
+            "",
+            "The 7.2 floor is enforced by the three things that actually check it: require.php '>=7.2',",
+            "phpstan.neon phpVersion 70200, and phpcs.xml.dist testVersion 7.2- -- plus the release",
+            "workflow's php -l matrix across 7.4-8.4.",
+            "",
+            "The one thing the old pin silently protected: with platform at 7.4, composer would happily",
+            "install a RUNTIME dependency requiring ^7.4, making require.php '>=7.2' a lie. The",
+            "check-floor script asserts there are no runtime dependencies at all, which is the actual",
+            "invariant -- this SDK is bundled into other people's plugins and must add nothing to their",
+            "dependency tree."
+        ],
         "platform": {
-            "php": "7.2.5"
+            "php": "7.4"
         },
         "allow-plugins": {
             "dealerdirect/phpcodesniffer-composer-installer": true,

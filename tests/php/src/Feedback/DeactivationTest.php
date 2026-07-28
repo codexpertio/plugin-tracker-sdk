@@ -922,11 +922,27 @@ class DeactivationTest extends PluginTrackerTestCase {
 		$feedback->render();
 		$html = ob_get_clean();
 
-		$fields = $feedback->site_fields();
+		// Driven off payload() -- what is actually SENT -- not site_fields().
+		//
+		// This test iterated site_fields() and was therefore weaker than both its own name and the class
+		// docblock claimed: it could not see any field added to the payload outside that one method, and a
+		// field had already slipped through exactly that gap. `project` was transmitted and never
+		// disclosed, under a heading reading "Pressing the button below sends exactly this, and nothing
+		// else", which docs/FEEDBACK.md names as a forbidden change.
+		$payload = $feedback->payload( 'broke_site', 'a typed comment' );
 
-		$this->assertNotEmpty( $fields );
+		$this->assertNotEmpty( $payload );
 
-		foreach ( $fields as $key => $value ) {
+		// Envelope plumbing rather than data about the site. Each is described in prose in the modal
+		// instead of being itemised, so it is listed here explicitly -- an allow-list, so that a NEW
+		// field is a test failure until somebody decides which side it falls on.
+		$structural = array( 'schema', 'sdk', 'at', 'reason', 'note' );
+
+		foreach ( $payload as $key => $value ) {
+			if ( in_array( $key, $structural, true ) ) {
+				continue;
+			}
+
 			if ( is_bool( $value ) ) {
 				// Rendered as a localised Yes/No rather than the literal "1"/"".
 				continue;
