@@ -120,6 +120,30 @@ class Config {
 	const SLUG_PATTERN = '/^[a-z0-9][a-z0-9-]{0,61}[a-z0-9]\z/';
 
 	/**
+	 * The value of `collect` meaning "every optional field, including ones added later".
+	 *
+	 * A literal rather than the enumerated list, so a snippet generated today does not silently
+	 * exclude a field the SDK gains tomorrow.
+	 */
+	const COLLECT_ALL = 'all';
+
+	/**
+	 * The optional environment fields `collect` may name. Mirrors Telemetry_Collect::FIELDS server-side.
+	 *
+	 * Identity, timing and the event name are absent on purpose: they are what make a payload mean
+	 * anything, and a switch that could turn them off would let an integration quietly produce rows
+	 * nobody can interpret.
+	 */
+	const COLLECTABLE = array( 'wp', 'php', 'locale', 'multisite', 'server', 'theme', 'plugins' );
+
+	/**
+	 * Which optional fields this copy may send.
+	 *
+	 * @var string|string[]
+	 */
+	private $collect = self::COLLECT_ALL;
+
+	/**
 	 * Build from a consumer-supplied array.
 	 *
 	 * @param array $args Raw arguments as passed to Tracker::init().
@@ -133,6 +157,7 @@ class Config {
 		$this->hash    = isset( $args['hash'] ) && is_string( $args['hash'] ) ? trim( $args['hash'] ) : '';
 		$this->file    = isset( $args['file'] ) && is_string( $args['file'] ) ? $args['file'] : '';
 		$this->enabled = ! empty( $args['enabled'] );
+		$this->collect = self::normalize_collect( isset( $args['collect'] ) ? $args['collect'] : self::COLLECT_ALL );
 
 		if ( isset( $args['endpoint'] ) && is_string( $args['endpoint'] ) && '' !== $args['endpoint'] ) {
 			$this->endpoint = rtrim( $args['endpoint'], '/' );
@@ -548,6 +573,63 @@ class Config {
 	 */
 	public function enabled() {
 		return $this->enabled;
+	}
+
+	/**
+	 * Which optional environment fields this copy may send.
+	 *
+	 * Defaults to COLLECT_ALL, and the generated snippet states it explicitly so an author can see
+	 * that it is a choice rather than a hidden default.
+	 *
+	 * **This is a ceiling, not the final say.** The dashboard's own selection is enforced on
+	 * INGESTION, because a value living here is frozen the moment the author ships -- the SDK is
+	 * bundled into their plugin, on sites nobody can ask to update. So narrowing this narrows what
+	 * a NEW release transmits; narrowing it in the dashboard narrows what is stored for every
+	 * install that already exists. Both are real, and they are not the same lever.
+	 *
+	 * @return string|string[] COLLECT_ALL, or a list of field names.
+	 */
+	public function collect() {
+		return $this->collect;
+	}
+
+	/**
+	 * Is this optional field permitted by the local config?
+	 *
+	 * @param string $field Field name.
+	 * @return bool
+	 */
+	public function collects( $field ) {
+
+		if ( self::COLLECT_ALL === $this->collect ) {
+			return true;
+		}
+
+		return in_array( $field, $this->collect, true );
+	}
+
+	/**
+	 * Reduce a `collect` argument to COLLECT_ALL or a list of known names.
+	 *
+	 * An unrecognised name is dropped rather than kept: this decides what is transmitted, so a typo
+	 * must not be carried forward to mean something in a later version. An empty list is left empty
+	 * -- "send no optional fields" is a legitimate instruction and the opposite of the default, so
+	 * it must not be quietly promoted back to COLLECT_ALL.
+	 *
+	 * @param mixed $value Raw argument.
+	 * @return string|string[]
+	 */
+	private static function normalize_collect( $value ) {
+
+		if ( self::COLLECT_ALL === $value || null === $value || '' === $value ) {
+			return self::COLLECT_ALL;
+		}
+
+		if ( ! is_array( $value ) ) {
+			return self::COLLECT_ALL;
+		}
+
+		return array_values( array_intersect( array_map( 'strval', $value ), self::COLLECTABLE ) );
 	}
 
 	/**

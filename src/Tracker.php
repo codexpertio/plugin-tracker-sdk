@@ -7,6 +7,7 @@
 
 namespace Codexpert\PluginTracker;
 
+use Codexpert\PluginTracker\Config;
 use Codexpert\PluginTracker\Consent\Gate;
 use Codexpert\PluginTracker\Consent\Notice;
 use Codexpert\PluginTracker\Cron\Scheduler;
@@ -280,7 +281,7 @@ class Tracker {
 	 * @return array
 	 */
 	private function common_fields() {
-		return array(
+		$fields = array(
 			'at'             => time(),
 			'plugin'         => $this->config->plugin(),
 			'plugin_version' => $this->config->version(),
@@ -291,6 +292,17 @@ class Tracker {
 			'locale'         => function_exists( 'get_locale' ) ? (string) get_locale() : '',
 			'multisite'      => function_exists( 'is_multisite' ) ? is_multisite() : false,
 		);
+
+		// `collect` narrows what this copy TRANSMITS. It defaults to all, and the dashboard's own
+		// selection is enforced separately at ingestion -- this value is frozen when the author
+		// ships, so it can only ever govern new releases. See Config::collect().
+		foreach ( Config::COLLECTABLE as $field ) {
+			if ( isset( $fields[ $field ] ) && ! $this->config->collects( $field ) ) {
+				unset( $fields[ $field ] );
+			}
+		}
+
+		return $fields;
 	}
 
 	/**

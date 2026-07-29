@@ -1052,6 +1052,58 @@ class DeactivationTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * `collect` narrows what this copy transmits, and defaults to everything.
+	 *
+	 * It is a ceiling on the SDK side, not the final say: the dashboard's own selection is enforced
+	 * at ingestion, because a value in the snippet is frozen the moment the author ships and cannot
+	 * reach an install that already exists.
+	 */
+	public function test_collect_defaults_to_sending_every_optional_field() {
+		list( $feedback ) = $this->feedback();
+
+		$payload = $feedback->payload( 'other', '' );
+
+		foreach ( array( 'wp', 'php', 'locale', 'multisite', 'server', 'theme', 'plugins' ) as $field ) {
+			$this->assertArrayHasKey( $field, $payload, $field . ' must be sent by default' );
+		}
+	}
+
+	/**
+	 * A narrowed selection drops the fields it excludes -- including every key a multi-key field
+	 * stands for, not just the one sharing its name.
+	 */
+	public function test_collect_drops_the_fields_it_excludes() {
+		list( $feedback ) = $this->feedback( array( 'collect' => array( 'wp', 'php' ) ) );
+
+		$payload = $feedback->payload( 'other', '' );
+
+		$this->assertArrayHasKey( 'wp', $payload );
+		$this->assertArrayHasKey( 'php', $payload );
+
+		foreach ( array( 'locale', 'multisite', 'server', 'theme', 'theme_version', 'theme_parent', 'plugins', 'total_plugins' ) as $field ) {
+			$this->assertArrayNotHasKey( $field, $payload, $field . ' must not be sent' );
+		}
+	}
+
+	/**
+	 * Identity survives any selection. `site` is what makes feedback a message from somebody, and
+	 * `hash` is what routes it to the developer who should read it -- neither is selectable, so no
+	 * configuration can produce a submission nobody can act on.
+	 */
+	public function test_collect_cannot_strip_the_fields_that_make_feedback_meaningful() {
+		list( $feedback ) = $this->feedback( array( 'collect' => array() ) );
+
+		$payload = $feedback->payload( 'broke_site', 'still says something' );
+
+		$this->assertSame( 'https://cx-feedback-test.example', $payload['site'] );
+		$this->assertSame( self::HASH, $payload['hash'] );
+		$this->assertSame( 'broke_site', $payload['reason'] );
+		$this->assertSame( 'still says something', $payload['note'] );
+		$this->assertArrayHasKey( 'plugin', $payload );
+		$this->assertArrayHasKey( 'plugin_version', $payload );
+	}
+
+	/**
 	 * Nothing in the payload is derived from a user account. No email address, no username, no user
 	 * id -- not the administrator's, not anyone's. A deactivation survey is the obvious place to
 	 * reach for a reply-to address, and it is refused; see docs/FEEDBACK.md for why.

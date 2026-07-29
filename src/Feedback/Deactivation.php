@@ -397,7 +397,7 @@ class Deactivation {
 		$theme   = self::theme();
 		$plugins = self::active_plugins();
 
-		return array(
+		$fields = array(
 			'site'           => function_exists( 'home_url' ) ? (string) home_url() : '',
 			'plugin'         => $this->config->plugin(),
 			'plugin_version' => $this->config->version(),
@@ -412,6 +412,36 @@ class Deactivation {
 			'plugins'        => array_slice( $plugins, 0, self::PLUGINS_MAX ),
 			'total_plugins'  => count( $plugins ),
 		);
+
+		if ( Config::COLLECT_ALL === $this->config->collect() ) {
+			return $fields;
+		}
+
+		// `theme` and `plugins` each stand for several keys, so dropping one has to drop all of its
+		// keys rather than the one that happens to share its name. `site` is absent from COLLECTABLE
+		// and therefore never removed here -- feedback without the site address is a message from
+		// nobody, which is the one thing this payload cannot be.
+		$owned = array(
+			'wp'        => array( 'wp' ),
+			'php'       => array( 'php' ),
+			'locale'    => array( 'locale' ),
+			'multisite' => array( 'multisite' ),
+			'server'    => array( 'server' ),
+			'theme'     => array( 'theme', 'theme_version', 'theme_parent' ),
+			'plugins'   => array( 'plugins', 'total_plugins' ),
+		);
+
+		foreach ( $owned as $field => $keys ) {
+			if ( $this->config->collects( $field ) ) {
+				continue;
+			}
+
+			foreach ( $keys as $key ) {
+				unset( $fields[ $key ] );
+			}
+		}
+
+		return $fields;
 	}
 
 	/**
