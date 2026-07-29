@@ -142,7 +142,7 @@ wrapper — feedback is a single object, not a batch, because there is nothing t
 
 ```json
 {
-  "schema":         1,
+  "schema":         2,
   "sdk":            "1.0.0",
   "project":        "pt_proj_1a2b3c",
   "hash":           "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
@@ -152,12 +152,23 @@ wrapper — feedback is a single object, not a batch, because there is nothing t
   "plugin_version": "2.4.1",
   "wp":             "6.5.2",
   "php":            "8.1",
+  "server":         "nginx",
   "locale":         "de_DE",
   "multisite":      false,
+  "theme":          "twentytwentyfour",
+  "theme_version":  "1.2",
+  "theme_parent":   "",
+  "plugins":        [ { "plugin": "akismet/akismet.php", "version": "5.3" } ],
+  "total_plugins":  14,
   "reason":         "broke_site",
   "note":           "Fatal on the checkout page after updating."
 }
 ```
+
+**Schema 1 is still valid and is still sent.** The SDK ships bundled inside third-party plugins, frozen at whatever
+version their author downloaded, on sites nobody can ask to update — so ingestion accepts both versions forever, and
+the stored `schema_version` records which one a row arrived as. Every schema 2 field is nullable in the backend for
+exactly that reason.
 
 `reason` and `note` are **both optional and independently omitted when empty**. A submission with neither is not
 transmitted at all — there is nothing to say, and sending the site's address to report that would be transmission
@@ -167,7 +178,7 @@ without a purpose.
 
 | Field            | Type   | Keep/drop | Why                                                                                                                                                                                                                                                          |
 |------------------|--------|-----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `schema`         | int    | **keep**  | This document's version, currently `1`. Independent of `Event::SCHEMA`: a different payload on a different route versions separately, so a telemetry schema bump does not falsely imply a feedback change.                                                    |
+| `schema`         | int    | **keep**  | This document's version, currently `2`. Independent of `Event::SCHEMA`: a different payload on a different route versions separately, so a telemetry schema bump does not falsely imply a feedback change.                                                    |
 | `sdk`            | string | **keep**  | SDK semver. Which bundled copy produced this, which matters because consumers freeze whatever version they downloaded, permanently (§10.2).                                                                                                                   |
 | `project`        | string | **keep**  | Public, non-secret project identifier. Says which project the feedback is for.                                                                                                                                                                               |
 | `hash`           | string | **keep**  | The dashboard-issued plugin hash from the pasted snippet. Public and non-secret by construction (`Config::HASH_PATTERN`) — it ships inside the consumer's plugin, and if that plugin is on WordPress.org the zip is published. Tells the dashboard which plugin record this feedback belongs to. |
@@ -177,6 +188,12 @@ without a purpose.
 | `plugin_version` | string | **keep**  | Which version they gave up on. The single most useful correlate for "did release 2.4.1 break something".                                                                                                                                                      |
 | `wp`             | string | **keep**  | Same justification as `EVENTS.md`: which WordPress versions the consumer must support, and a compatibility break is a common reason to deactivate.                                                                                                            |
 | `php`            | string | **keep**  | `PHP_MAJOR.PHP_MINOR` only. Patch is dropped as needless precision and fingerprint surface, exactly as on the telemetry stream.                                                                                                                               |
+| `server`         | string | **keep** (schema 2) | The web server as a bare product name — `apache`, `nginx`, `litespeed`, `openresty`, `caddy`, `lighttpd`, `iis`, or `other`. Matched against that closed list and only a literal from it is transmitted, so the raw `SERVER_SOFTWARE` header never travels: its version and distribution are the "server hostname, OS" the table below still refuses. Same reasoning that keeps `php` to major.minor. |
+| `theme`          | string | **keep** (schema 2) | Active theme stylesheet slug. See the reversal note below.                                                                                                                                                                                                    |
+| `theme_version`  | string | **keep** (schema 2) | Its version. A theme conflict is usually version-specific.                                                                                                                                                                                                    |
+| `theme_parent`   | string | **keep** (schema 2) | Parent stylesheet slug, empty unless this is a child theme. "The bug appears under theme X" is a different report when X is a two-file child of a parent doing the actual work.                                                                                |
+| `plugins`        | array  | **keep** (schema 2) | Active plugins as `{ plugin, version }`, basename rather than display name because that is stable across locales and is what reproduces a conflict. Network-activated plugins are merged in on multisite. **Bounded to 100 entries** (`Deactivation::PLUGINS_MAX`), and the bound is re-applied server-side — a bound only the client enforces is not a bound. Entries whose basename does not match WordPress's own shape are dropped, not repaired. |
+| `total_plugins`  | int    | **keep** (schema 2) | The true count, which is not `count( plugins )` when the list was truncated. Sent so a short list cannot be mistaken for a complete one. Named this way and not `plugins_count` because the join-key test asserts the encoded payload contains no `ins_` anywhere, and every `plugins_*` key contains that substring. |
 | `locale`         | string | **keep**  | A `confusing` reason from a site in an unsupported language is a translation problem, not a UX problem. Without the locale those two are indistinguishable.                                                                                                    |
 | `multisite`      | bool   | **keep**  | `broke_site` on multisite is a different bug from `broke_site` on a single site.                                                                                                                                                                              |
 | `reason`         | string | **keep**  | One of the **closed** set in `Event::REASONS`: `temporary`, `no_longer_needed`, `found_better`, `broke_site`, `confusing`, `missing_feature`, `other`. Validated server-side against that constant, never trusted from the POST body. An unrecognised value is **dropped, not repaired** — the key is omitted rather than sent with a sanitised imitation. Deliberately the same set the telemetry `deactivation` event uses, so the two never disagree about what a reason is. |
@@ -191,10 +208,37 @@ without a purpose.
 | Admin email / any email address | The obvious thing to want — Freemius collects it — and still refused. Three reasons: the administrator did not *type* it, so it is not covered by "they submitted this"; `get_option( 'admin_email' )` is PII the SDK would be volunteering on their behalf; and there is no reply mechanism in this contract, so it would be collected for a purpose that does not exist. A future schema bump **may** add a `contact` field, but only as a **separately checkboxed, typed-in** address — never one derived from the site's options. |
 | Username, display name, user ID | PII, and irrelevant: the question is what went wrong with the plugin, not who was logged in. |
 | IP address | PII under GDPR. Note the *server* sees the source IP on every request regardless — ingestion must not log or store it. That obligation is on the backend, recorded here because the SDK cannot enforce it. |
-| Active theme, list of other active plugins | Genuinely useful for diagnosing `broke_site`, and still refused, for the same reason `EVENTS.md` refuses it: the set of active plugins is close to unique per site. Here it would be worse than on the telemetry stream, not better — combined with `site` it is a full profile of the installation. A developer who needs a conflict list should ask for it in a support ticket, where the administrator can decide what to share. |
+| ~~Active theme, list of other active plugins~~ | **Reversed in schema 2 — see below. This row is kept rather than deleted, because the argument against it was never answered, only overruled.** |
 | PHP error log, last fatal, stack trace | The most requested thing for a `broke_site` reason. Refused because an error log is unbounded, uninspectable content that routinely contains file paths, database credentials, and user data. The SDK cannot promise anything about what is in it. |
 | Post/page/user counts | Business-sensitive for the site owner, and not ours. |
 | Licence key, any credential | Never. |
+
+### The schema 2 reversal, recorded
+
+Schema 1 refused the active theme and the plugin list. Schema 2 sends both. The refusal is above, struck through
+rather than deleted, because a decision that gets reversed should leave a trace of what was traded away.
+
+**The original argument, which still holds:** the set of active plugins is close to unique per site, so it is a
+fingerprint. On this payload it is worse than on the telemetry stream, because combined with `site` it is a full
+profile of one named installation.
+
+**Why it was overruled:** this payload is *already* identified. It carries `site`, the administrator reads the
+itemised disclosure, and they press a button that says it will be sent. The marginal loss is a fuller profile of a
+site that has already named itself — not the de-anonymisation of one that had not. That is a materially different
+trade from the one `EVENTS.md` refuses.
+
+**What this does not license.** `EVENTS.md` still refuses these fields on the telemetry stream, and that refusal is
+load-bearing, not habit: the hashed install id exists precisely so that stream cannot be tied to a site, and a
+plugin-list fingerprint would undo it for every install retroactively. The join-key rule is unchanged. Reversing it
+there is not the same decision as reversing it here, and it has not been made.
+
+**Consequences, so nobody rediscovers them as surprises:**
+
+- Two plugins from different vendors may each bundle this SDK. When one renders its modal, the disclosure lists the
+  other vendor's plugin, because it is listing the site's plugins. Asserted by a test so it reads as intended.
+- The disclosure copy no longer claims the payload withholds "your other plugins". A disclosure that names something
+  as withheld while sending it is worse than no disclosure — it is a specific false assurance.
+- Admin email and admin name were requested alongside these and remain refused, above.
 
 ---
 

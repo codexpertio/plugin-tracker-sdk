@@ -84,8 +84,28 @@ class Deactivation {
 	/**
 	 * Feedback payload contract version. Independent of Event::SCHEMA -- this is a different
 	 * payload on a different route and the two version separately. See docs/FEEDBACK.md.
+	 *
+	 * 2: added `server`, the theme fields and the active-plugin list. A consumer of this payload
+	 * cannot assume those keys exist on a schema 1 submission, and ingestion must keep accepting
+	 * schema 1 -- the SDK ships bundled inside third-party plugins, frozen at whatever version the
+	 * author downloaded, on sites nobody can ask to update.
 	 */
-	const SCHEMA = 1;
+	const SCHEMA = 2;
+
+	/**
+	 * Hard ceiling on how many active plugins are itemised.
+	 *
+	 * The list is the one field here whose size the site decides, so it is bounded for the same
+	 * reason NOTE_MAX exists: one submission must not become an unbounded upload. `total_plugins`
+	 * is sent alongside and is the TRUE total, so a truncated list is visible as truncated rather
+	 * than looking like a complete list that happens to be short.
+	 *
+	 * Named `total_plugins` and not `plugins_count` because of a real constraint, not taste: the
+	 * join-key test asserts the encoded payload contains no `ins_` anywhere, deliberately bluntly,
+	 * and every key spelled `plugins_*` contains that substring. Any future field here has to clear
+	 * the same bar.
+	 */
+	const PLUGINS_MAX = 100;
 
 	/**
 	 * Route under the endpoint namespace. Deliberately NOT telemetry/events.
@@ -374,15 +394,164 @@ class Deactivation {
 	 * @return array<string,mixed>
 	 */
 	public function site_fields() {
+		$theme   = self::theme();
+		$plugins = self::active_plugins();
+
 		return array(
 			'site'           => function_exists( 'home_url' ) ? (string) home_url() : '',
 			'plugin'         => $this->config->plugin(),
 			'plugin_version' => $this->config->version(),
 			'wp'             => function_exists( 'get_bloginfo' ) ? (string) get_bloginfo( 'version' ) : '',
 			'php'            => PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION,
+			'server'         => self::server(),
 			'locale'         => function_exists( 'get_locale' ) ? (string) get_locale() : '',
 			'multisite'      => function_exists( 'is_multisite' ) ? (bool) is_multisite() : false,
+			'theme'          => $theme['slug'],
+			'theme_version'  => $theme['version'],
+			'theme_parent'   => $theme['parent'],
+			'plugins'        => array_slice( $plugins, 0, self::PLUGINS_MAX ),
+			'total_plugins'  => count( $plugins ),
 		);
+	}
+
+	/**
+	 * Which web server this is, as a bare product name.
+	 *
+	 * Matched against a closed list and only a literal FROM that list is ever returned, so the
+	 * raw header never reaches the payload. That is the whole design: `SERVER_SOFTWARE` reads
+	 * `Apache/2.4.41 (Ubuntu)` or `nginx/1.18.0`, and the version and distribution in there are
+	 * the "server hostname, OS" that docs/FEEDBACK.md refuses. The question asked is "Apache or
+	 * Nginx", and that is exactly what is answered -- the same reasoning that keeps `php` to
+	 * major.minor.
+	 *
+	 * Order matters. OpenResty and LiteSpeed both advertise a string that also contains the name
+	 * of the server they are built on or emulating, so the more specific name is tested first.
+	 *
+	 * @return string One of the known names, 'other' when unrecognised, '' when unavailable.
+	 */
+	private static function server() {
+
+		// phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotValidated, WordPress.Security.ValidatedSanitizedInput.MissingUnslash, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- This value provably cannot escape this function: it is lowercased, matched against the closed list below, and only a literal FROM that list is ever returned. Neither remedy the sniff asks for would do anything. wp_unslash() is for the superglobals WordPress adds slashes to -- $_POST, $_GET, $_COOKIE, $_REQUEST -- and $_SERVER is not one of them; sanitize_text_field() on a string that is about to be discarded in favour of a hardcoded literal is theatre. Both would read as diligence while changing nothing.
+		$raw = isset( $_SERVER['SERVER_SOFTWARE'] ) ? strtolower( (string) $_SERVER['SERVER_SOFTWARE'] ) : '';
+
+		if ( '' === $raw ) {
+			return '';
+		}
+
+		foreach ( array( 'litespeed', 'openresty', 'nginx', 'apache', 'caddy', 'lighttpd', 'iis' ) as $name ) {
+			if ( false !== strpos( $raw, $name ) ) {
+				return $name;
+			}
+		}
+
+		return 'other';
+	}
+
+	/**
+	 * The active theme.
+	 *
+	 * `parent` is populated only for a child theme, and it matters: "the bug appears under theme X"
+	 * is a different report when X is a two-file child of a parent doing the actual work.
+	 *
+	 * @return array{slug:string,version:string,parent:string}
+	 */
+	private static function theme() {
+
+		// The only guard needed. Past it WordPress is loaded, so wp_get_theme() returns a WP_Theme
+		// and its methods exist -- an is_object()/method_exists() pair here would be unreachable
+		// defensiveness, which PHPStan proves rather than merely suspects.
+		if ( ! function_exists( 'wp_get_theme' ) ) {
+			return array(
+				'slug'    => '',
+				'version' => '',
+				'parent'  => '',
+			);
+		}
+
+		$theme = wp_get_theme();
+
+		// parent() is the one that genuinely varies: WP_Theme for a child theme, false otherwise.
+		$parent = $theme->parent();
+
+		return array(
+			'slug'    => (string) $theme->get_stylesheet(),
+			'version' => (string) $theme->get( 'Version' ),
+			'parent'  => $parent ? (string) $parent->get_stylesheet() : '',
+		);
+	}
+
+	/**
+	 * Every active plugin on the site, as basename and version.
+	 *
+	 * The basename rather than the display name, because it is stable across locales and is what a
+	 * developer needs to reproduce a conflict. Network-activated plugins are merged in: on
+	 * multisite they are active on this site and absent from `active_plugins`, so reading only that
+	 * option would report a site as having fewer plugins than it is running.
+	 *
+	 * Versions come from `get_plugins()`, which lives in an admin include that is not guaranteed to
+	 * be loaded on the request that reaches here. When it is unavailable the basenames are still
+	 * reported, with an empty version -- a list without versions is far more useful than no list.
+	 *
+	 * @return array<int,array{plugin:string,version:string}>
+	 */
+	private static function active_plugins() {
+
+		if ( ! function_exists( 'get_option' ) ) {
+			return array();
+		}
+
+		$active = get_option( 'active_plugins' );
+		$active = is_array( $active ) ? $active : array();
+
+		if ( function_exists( 'is_multisite' ) && is_multisite() && function_exists( 'get_site_option' ) ) {
+			$network = get_site_option( 'active_sitewide_plugins' );
+
+			if ( is_array( $network ) ) {
+				// Keyed by basename, unlike active_plugins() which is a plain list.
+				$active = array_merge( $active, array_keys( $network ) );
+			}
+		}
+
+		$active = array_values( array_unique( array_filter( array_map( 'strval', $active ) ) ) );
+
+		sort( $active );
+
+		$installed = self::installed_plugins();
+		$list      = array();
+
+		foreach ( $active as $basename ) {
+			$list[] = array(
+				'plugin'  => $basename,
+				'version' => isset( $installed[ $basename ]['Version'] ) ? (string) $installed[ $basename ]['Version'] : '',
+			);
+		}
+
+		return $list;
+	}
+
+	/**
+	 * The `get_plugins()` map, loading the admin include if it is safe to.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private static function installed_plugins() {
+
+		if ( ! function_exists( 'get_plugins' ) ) {
+			if ( ! defined( 'ABSPATH' ) || ! file_exists( ABSPATH . 'wp-admin/includes/plugin.php' ) ) {
+				return array();
+			}
+
+			require_once ABSPATH . 'wp-admin/includes/plugin.php';
+		}
+
+		// Re-checked because the require_once above may have been skipped, or may have loaded a file
+		// that did not define it. Past this point get_plugins() is declared to return an array, so
+		// there is nothing further to test.
+		if ( ! function_exists( 'get_plugins' ) ) {
+			return array();
+		}
+
+		return get_plugins();
 	}
 
 	/**
@@ -405,6 +574,17 @@ class Deactivation {
 	 *                                             which is the worst of both.
 	 *   - any email address or user identity   -- see docs/FEEDBACK.md; nothing here is derived
 	 *                                             from a user account.
+	 *
+	 * Present since schema 2, and a deliberate reversal of an earlier refusal: `server`, the theme
+	 * fields and the active-plugin list. They were dropped because the set of active plugins is
+	 * close to unique per site and therefore re-identifying. That argument still holds and is not
+	 * answered -- it is overruled, because this payload already carries `site` and is identified by
+	 * design, so the marginal loss is a fuller profile of a site that has already named itself
+	 * rather than the de-anonymisation of one that had not.
+	 *
+	 * What that does NOT license is putting the same fields on the telemetry stream, where the
+	 * hashed install id exists precisely so the site is not identifiable. The join-key rule below
+	 * is what keeps the two apart, and it is unchanged.
 	 *
 	 * @param mixed $reason Posted reason. Untrusted.
 	 * @param mixed $note   Posted comment. Untrusted.
@@ -657,7 +837,11 @@ class Deactivation {
 			'disclosure_more'    => __( 'Click here to see exactly what is sent', 'plugin-tracker-sdk' ),
 			'disclosure_title'   => __( 'Pressing the button below sends exactly this, and nothing else:', 'plugin-tracker-sdk' ),
 			'disclosure_note'    => __( 'Your comment, exactly as you typed it', 'plugin-tracker-sdk' ),
-			'disclosure_none'    => __( 'It does not send your email address, your username, your other plugins, or the anonymous usage-tracking ID. It is sent once, because you pressed the button, and it is separate from usage tracking, which is unaffected by this and stays as you set it.', 'plugin-tracker-sdk' ),
+			// "your other plugins" used to appear in this sentence. It was removed when the list
+			// started being sent -- a disclosure that names something as withheld while sending it is
+			// worse than no disclosure, because it is a specific false assurance rather than a
+			// general silence.
+			'disclosure_none'    => __( 'It does not send your email address, your username, your content, or the anonymous usage-tracking ID. It is sent once, because you pressed the button, and it is separate from usage tracking, which is unaffected by this and stays as you set it.', 'plugin-tracker-sdk' ),
 			'submit'             => __( 'Send feedback &amp; deactivate', 'plugin-tracker-sdk' ),
 			'skip'               => __( 'Skip &amp; Deactivate', 'plugin-tracker-sdk' ),
 			'cancel'             => __( 'Cancel, keep it active', 'plugin-tracker-sdk' ),
@@ -667,8 +851,13 @@ class Deactivation {
 			'field_plugin'       => __( 'Plugin and version', 'plugin-tracker-sdk' ),
 			'field_wp'           => __( 'WordPress version', 'plugin-tracker-sdk' ),
 			'field_php'          => __( 'PHP version', 'plugin-tracker-sdk' ),
+			'field_server'       => __( 'Web server', 'plugin-tracker-sdk' ),
 			'field_locale'       => __( 'Site language', 'plugin-tracker-sdk' ),
 			'field_multisite'    => __( 'Multisite', 'plugin-tracker-sdk' ),
+			'field_theme'        => __( 'Active theme', 'plugin-tracker-sdk' ),
+			'field_plugins'      => __( 'Your active plugins', 'plugin-tracker-sdk' ),
+			/* translators: %d: number of active plugins beyond the ones listed. */
+			'field_plugins_more' => __( 'and %d more', 'plugin-tracker-sdk' ),
 			'field_hash'         => __( 'Plugin identifier', 'plugin-tracker-sdk' ),
 			'field_project'      => __( 'Project identifier', 'plugin-tracker-sdk' ),
 			'field_reason'       => __( 'The reason you pick above', 'plugin-tracker-sdk' ),
@@ -885,8 +1074,39 @@ class Deactivation {
 								<li><?php echo esc_html( (string) $text['field_plugin'] ); ?>: <code><?php echo esc_html( (string) $fields['plugin'] ); ?> <?php echo esc_html( (string) $fields['plugin_version'] ); ?></code></li>
 								<li><?php echo esc_html( (string) $text['field_wp'] ); ?>: <code><?php echo esc_html( (string) $fields['wp'] ); ?></code></li>
 								<li><?php echo esc_html( (string) $text['field_php'] ); ?>: <code><?php echo esc_html( (string) $fields['php'] ); ?></code></li>
+								<?php if ( '' !== $fields['server'] ) : ?>
+									<li><?php echo esc_html( (string) $text['field_server'] ); ?>: <code><?php echo esc_html( (string) $fields['server'] ); ?></code></li>
+								<?php endif; ?>
 								<li><?php echo esc_html( (string) $text['field_locale'] ); ?>: <code><?php echo esc_html( (string) $fields['locale'] ); ?></code></li>
 								<li><?php echo esc_html( (string) $text['field_multisite'] ); ?>: <code><?php echo esc_html( $fields['multisite'] ? (string) $text['yes'] : (string) $text['no'] ); ?></code></li>
+								<?php if ( '' !== $fields['theme'] ) : ?>
+									<li>
+										<?php echo esc_html( (string) $text['field_theme'] ); ?>:
+										<code><?php echo esc_html( trim( $fields['theme'] . ' ' . $fields['theme_version'] ) ); ?></code>
+										<?php if ( '' !== $fields['theme_parent'] ) : ?>
+											<code><?php echo esc_html( $fields['theme_parent'] ); ?></code>
+										<?php endif; ?>
+									</li>
+								<?php endif; ?>
+								<?php
+								/*
+								 * Itemised in full, not summarised as a count. This is the field a reader is
+								 * most likely to object to, so showing "12 plugins" while transmitting their
+								 * names would be the disclosure failing at precisely the point it matters.
+								 * Truncation is stated rather than silent.
+								 */
+								?>
+								<?php if ( ! empty( $fields['plugins'] ) ) : ?>
+									<li>
+										<?php echo esc_html( (string) $text['field_plugins'] ); ?>:
+										<?php foreach ( $fields['plugins'] as $entry ) : ?>
+											<code><?php echo esc_html( trim( $entry['plugin'] . ' ' . $entry['version'] ) ); ?></code>
+										<?php endforeach; ?>
+										<?php if ( $fields['total_plugins'] > count( $fields['plugins'] ) ) : ?>
+											<?php echo esc_html( sprintf( (string) $text['field_plugins_more'], $fields['total_plugins'] - count( $fields['plugins'] ) ) ); ?>
+										<?php endif; ?>
+									</li>
+								<?php endif; ?>
 								<li><?php echo esc_html( (string) $text['field_hash'] ); ?>: <code><?php echo esc_html( $this->config->hash() ); ?></code></li>
 								<?php /* Only when the consumer actually set a project, matching payload()'s own condition -- listing a field that will not be sent is as wrong as sending one that is not listed. */ ?>
 								<?php if ( '' !== $this->config->project() ) : ?>

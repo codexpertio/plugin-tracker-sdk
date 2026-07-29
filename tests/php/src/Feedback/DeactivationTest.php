@@ -52,6 +52,14 @@ class DeactivationTest extends PluginTrackerTestCase {
 		Functions\when( 'get_locale' )->justReturn( 'en_US' );
 		Functions\when( 'is_multisite' )->justReturn( false );
 		Functions\when( 'sanitize_textarea_field' )->alias( array( $this, 'fake_sanitize_textarea_field' ) );
+
+		// Here rather than in the render/handle helpers, and for a reason that is easy to get wrong:
+		// PHP cannot undefine a function, so once ANY test stubs wp_get_theme() the function exists
+		// for the rest of the process -- which makes site_fields()'s function_exists() guard pass in
+		// every later test, where Brain Monkey then throws "not defined nor mocked in this test".
+		// A per-helper stub therefore breaks tests that never called the helper, depending on
+		// execution order. Class-wide is the only stable answer.
+		$this->stub_site_inventory();
 	}
 
 	/**
@@ -158,6 +166,53 @@ class DeactivationTest extends PluginTrackerTestCase {
 				return implode( '/', array_slice( $parts, -2 ) );
 			}
 		);
+	}
+
+	/**
+	 * A theme, a server and a couple of active plugins.
+	 *
+	 * Without this every schema 2 field resolves to '' or [], and a test asserting the disclosure
+	 * lists what is sent would pass by listing nothing. Stubbed in both the render and the handle
+	 * harnesses so neither can silently exercise an empty site.
+	 *
+	 * @return void
+	 */
+	private function stub_site_inventory() {
+		$_SERVER['SERVER_SOFTWARE'] = 'Apache/2.4.41 (Ubuntu)';
+
+		\PluginTracker_Test_Option_Store::update(
+			'active_plugins',
+			array( 'my-plugin/my-plugin.php', 'akismet/akismet.php' )
+		);
+
+		Functions\when( 'wp_get_theme' )->justReturn(
+			new class() {
+				public function get_stylesheet() {
+					return 'twentytwentyfour';
+				}
+
+				public function get( $key ) {
+					return 'Version' === $key ? '1.2' : '';
+				}
+
+				public function parent() {
+					return false;
+				}
+			}
+		);
+
+		Functions\when( 'get_plugins' )->justReturn(
+			array(
+				'akismet/akismet.php'     => array( 'Version' => '5.3' ),
+				'my-plugin/my-plugin.php' => array( 'Version' => '1.0.0' ),
+			)
+		);
+
+		// Neutral default, for the same process-wide-definition reason as the rest of this method:
+		// the multisite test below defines get_site_option(), which makes it exist for every later
+		// test, and any of those that flip is_multisite() to true would then reach an unmocked
+		// function. Tests that care override this.
+		Functions\when( 'get_site_option' )->justReturn( array() );
 	}
 
 	/**
@@ -405,11 +460,51 @@ class DeactivationTest extends PluginTrackerTestCase {
 		$other->render();
 		$other_html = ob_get_clean();
 
+		// Asserted against the TARGETING surfaces specifically -- the basename attribute, the slug
+		// attribute and the namespaced element id -- rather than as a blanket "the other slug
+		// appears nowhere in the markup".
+		//
+		// That blanket form was a fair proxy until schema 2, when the disclosure began itemising
+		// every active plugin: one consumer's modal now legitimately names another consumer's
+		// basename, because it is listing the site's plugins and that is a plugin on the site. The
+		// invariant this test is named for is unaffected -- what must not leak is the identity the
+		// inline script matches Deactivate links against, and that is these three attributes.
 		$this->assertStringContainsString( 'data-cx-basename="my-plugin/my-plugin.php"', $mine_html );
-		$this->assertStringNotContainsString( 'other-plugin', $mine_html );
+		$this->assertStringNotContainsString( 'data-cx-basename="other-plugin/other-plugin.php"', $mine_html );
+		$this->assertStringNotContainsString( 'data-cx-tracker-feedback="other-plugin"', $mine_html );
+		$this->assertStringNotContainsString( 'cx-tracker-feedback-other-plugin', $mine_html );
 
 		$this->assertStringContainsString( 'data-cx-basename="other-plugin/other-plugin.php"', $other_html );
-		$this->assertStringNotContainsString( 'my-plugin', $other_html );
+		$this->assertStringNotContainsString( 'data-cx-basename="my-plugin/my-plugin.php"', $other_html );
+		$this->assertStringNotContainsString( 'data-cx-tracker-feedback="my-plugin"', $other_html );
+		$this->assertStringNotContainsString( 'cx-tracker-feedback-my-plugin', $other_html );
+	}
+
+	/**
+	 * The consequence of schema 2, stated as a test rather than left to be discovered.
+	 *
+	 * Two plugins from different vendors may each bundle this SDK. When one of them renders its
+	 * deactivation modal, the itemised disclosure lists the site's active plugins -- which includes
+	 * the other vendor's plugin. That is not a leak between copies; it is the feature, and the
+	 * administrator reads the list before pressing the button. It is asserted so that anyone who
+	 * finds it surprising finds this test and the reasoning with it.
+	 */
+	public function test_the_disclosure_lists_other_vendors_plugins_because_that_is_what_it_now_sends() {
+		$this->stub_render_environment();
+
+		list( $other ) = $this->feedback(
+			array(
+				'plugin' => 'other-plugin',
+				'file'   => '/wp-content/plugins/other-plugin/other-plugin.php',
+			)
+		);
+
+		ob_start();
+		$other->render();
+		$html = ob_get_clean();
+
+		$this->assertStringContainsString( 'akismet/akismet.php', $html );
+		$this->assertStringContainsString( 'my-plugin/my-plugin.php', $html );
 	}
 
 	/**
@@ -855,6 +950,108 @@ class DeactivationTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * The web server is reported as a bare product name, never as the raw header.
+	 *
+	 * `SERVER_SOFTWARE` reads `Apache/2.4.41 (Ubuntu)`. The version and the distribution in there
+	 * are the "server hostname, OS" that docs/FEEDBACK.md refuses, so only the matched product name
+	 * is transmitted -- the same reasoning that keeps `php` to major.minor.
+	 *
+	 * @dataProvider server_software_strings
+	 *
+	 * @param string $header   Raw SERVER_SOFTWARE value.
+	 * @param string $expected What the payload should carry.
+	 */
+	public function test_the_server_is_reduced_to_a_product_name( $header, $expected ) {
+		list( $feedback ) = $this->feedback();
+
+		$_SERVER['SERVER_SOFTWARE'] = $header;
+
+		$payload = $feedback->payload( 'other', '' );
+
+		$this->assertSame( $expected, $payload['server'] );
+	}
+
+	/**
+	 * @return array<string,array{0:string,1:string}>
+	 */
+	public function server_software_strings() {
+		return array(
+			'apache with distro'   => array( 'Apache/2.4.41 (Ubuntu)', 'apache' ),
+			'nginx with version'   => array( 'nginx/1.18.0', 'nginx' ),
+			// Both advertise a string naming the server they are built on, so the more specific
+			// name has to win or every LiteSpeed site would be counted as Apache.
+			'litespeed'            => array( 'LiteSpeed', 'litespeed' ),
+			'openresty over nginx' => array( 'openresty/1.21.4.1', 'openresty' ),
+			'iis'                  => array( 'Microsoft-IIS/10.0', 'iis' ),
+			'unrecognised'         => array( 'SomeProprietaryServer/9', 'other' ),
+			'absent'               => array( '', '' ),
+		);
+	}
+
+	/**
+	 * The active-plugin list is bounded, and its truncation is visible.
+	 *
+	 * `total_plugins` is the true count, so a list cut at PLUGINS_MAX cannot be mistaken for a
+	 * complete list that happens to be short. Same reasoning as NOTE_MAX: the site decides the size
+	 * of this field, so the SDK decides the ceiling.
+	 */
+	public function test_the_active_plugin_list_is_bounded_and_says_when_it_truncated() {
+		list( $feedback ) = $this->feedback();
+
+		$many = array();
+
+		for ( $i = 0; $i < Deactivation::PLUGINS_MAX + 25; $i++ ) {
+			$many[] = sprintf( 'plugin-%03d/plugin-%03d.php', $i, $i );
+		}
+
+		\PluginTracker_Test_Option_Store::update( 'active_plugins', $many );
+
+		$payload = $feedback->payload( 'other', '' );
+
+		$this->assertCount( Deactivation::PLUGINS_MAX, $payload['plugins'] );
+		$this->assertSame( Deactivation::PLUGINS_MAX + 25, $payload['total_plugins'] );
+	}
+
+	/**
+	 * Network-activated plugins are active on the site and absent from `active_plugins`, so reading
+	 * only that option would report a multisite as running fewer plugins than it is.
+	 */
+	public function test_network_activated_plugins_are_included_on_multisite() {
+		list( $feedback ) = $this->feedback();
+
+		Functions\when( 'is_multisite' )->justReturn( true );
+		Functions\when( 'get_site_option' )->justReturn( array( 'network-thing/network-thing.php' => 1 ) );
+
+		$payload = $feedback->payload( 'other', '' );
+
+		$basenames = array_column( $payload['plugins'], 'plugin' );
+
+		$this->assertContains( 'network-thing/network-thing.php', $basenames );
+		$this->assertContains( 'akismet/akismet.php', $basenames, 'the per-site list is still included' );
+	}
+
+	/**
+	 * Versions are attached where get_plugins() knows them, and the basename is reported either
+	 * way. get_plugins() lives in an admin include that is not guaranteed to be loaded on the
+	 * request that reaches here, and a list without versions beats no list.
+	 */
+	public function test_active_plugins_carry_versions_and_survive_an_unknown_one() {
+		list( $feedback ) = $this->feedback();
+
+		\PluginTracker_Test_Option_Store::update(
+			'active_plugins',
+			array( 'akismet/akismet.php', 'mystery/mystery.php' )
+		);
+
+		$payload = $feedback->payload( 'other', '' );
+
+		$by_name = array_column( $payload['plugins'], 'version', 'plugin' );
+
+		$this->assertSame( '5.3', $by_name['akismet/akismet.php'] );
+		$this->assertSame( '', $by_name['mystery/mystery.php'] );
+	}
+
+	/**
 	 * Nothing in the payload is derived from a user account. No email address, no username, no user
 	 * id -- not the administrator's, not anyone's. A deactivation survey is the obvious place to
 	 * reach for a reply-to address, and it is refused; see docs/FEEDBACK.md for why.
@@ -938,13 +1135,35 @@ class DeactivationTest extends PluginTrackerTestCase {
 		// field is a test failure until somebody decides which side it falls on.
 		$structural = array( 'schema', 'sdk', 'at', 'reason', 'note' );
 
-		foreach ( $payload as $key => $value ) {
+		// `plugins` is a list of arrays, so the check descends into it rather than skipping it --
+		// skipping would exempt the single field a reader is most likely to object to. Every
+		// basename and every version has to appear in the rendered markup.
+		//
+		// `total_plugins` is exempt only because it is a count OF a disclosed list, not a fact the
+		// list does not already show; the "and N more" line covers it when truncation applies.
+		$structural[] = 'total_plugins';
+
+		$flat = array();
+
+		array_walk_recursive(
+			$payload,
+			function ( $value, $key ) use ( &$flat ) {
+				$flat[] = array( $key, $value );
+			}
+		);
+
+		foreach ( $flat as list( $key, $value ) ) {
 			if ( in_array( $key, $structural, true ) ) {
 				continue;
 			}
 
 			if ( is_bool( $value ) ) {
 				// Rendered as a localised Yes/No rather than the literal "1"/"".
+				continue;
+			}
+
+			if ( '' === (string) $value ) {
+				// Nothing to look for. An absent theme or version is rendered as no line at all.
 				continue;
 			}
 
