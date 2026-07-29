@@ -126,9 +126,19 @@ next to it, and `version`/`compat` from an `init` listener that detects drift. *
 you call yourself** -- `$tracker->track( Event::FEATURE, [...] )` -- because only you know what your
 plugin's features are. Full detail per event: [`docs/EVENTS.md`](docs/EVENTS.md).
 
-**Never** the site address, an email, a username, an IP, or any content. The active-plugin list is
-refused too, despite being the most-requested telemetry field, because the set of active plugins is
-close to unique per site and would re-identify a site the anonymous ID exists to protect.
+**Never**, *on this stream*: the site address, an email, a username, an IP, or any content. The
+active-plugin list is refused here too, despite being the most-requested telemetry field, because
+the set of active plugins is close to unique per site and would re-identify a site the anonymous ID
+exists to protect.
+
+The scoping matters and is not pedantry. The **deactivation-feedback** payload is a different
+payload on a different route with its own consent basis, and it *does* carry the site address, the
+active theme and the active-plugin list — because it is identified by design, the administrator
+reads an itemised list of exactly those values in the dialog, and they press the button anyway. It
+still never carries an email, a username, or the anonymous install ID; that last omission is the
+join-key rule, and it is what stops the two streams from being correlatable. See
+[`docs/FEEDBACK.md`](docs/FEEDBACK.md) for the full field-by-field contract and for why the
+plugin-list decision went the other way there.
 
 The install ID is `hash_hmac( 'sha256', home_url(), $local_salt )` where the salt is generated on
 the site and never transmitted — so it cannot be reversed back to a site URL, including by us.
@@ -157,8 +167,11 @@ src/
 ├── Cron/Scheduler.php        # jittered scheduled flush
 └── Privacy/Personal_Data.php # WP exporter/eraser registration
 
-views/
-└── feedback/                 # mirrors the namespace segment it belongs to (Feedback\)
+views/                        # every subdirectory mirrors the namespace segment it serves
+├── consent/
+│   ├── prompt.php            # the opt-in admin notice
+│   └── server-notice.php     # advisory/deprecation notice from the ingestion response
+└── feedback/
     ├── modal.php             # the dialog's scoped stylesheet and markup
     └── behaviour.php         # the inline script that intercepts the Deactivate link
 
@@ -166,7 +179,9 @@ languages/plugin-tracker-sdk.pot  # sibling of src/, shipped by bin/build-dist.s
 ```
 
 `views/` sits outside `src/` because `src/` is the PSR-4 class tree and these files declare no
-class. They are included by `Deactivation::render()` through `__DIR__ . '/../../views/feedback/'`,
+class. **`src/` emits no markup at all** — a rule worth stating as a rule, because "no *substantial*
+markup" is an argument every time and this is checkable (`grep -rl '?>' src/` returns nothing). They
+are included through `__DIR__ . '/../../views/<segment>/'`,
 which only resolves in a built artifact because `bin/build-dist.sh` lists `views/` in its
 `SOURCE_ROOTS` and copies it at the same depth relative to `src/`. Adding a directory of templates
 anywhere without adding it there produces an artifact that loads, passes every other check, and

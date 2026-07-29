@@ -51,7 +51,8 @@ class Personal_Data {
 			'wp_privacy_personal_data_exporters',
 			function ( $exporters ) use ( $config, $consent, $install, $slug ) {
 				$exporters[ 'cx-tracker-' . $slug ] = array(
-					'exporter_friendly_name' => sprintf( 'Usage data (%s)', $config->name() ),
+					/* translators: %s: the consumer plugin's display name. */
+					'exporter_friendly_name' => sprintf( __( 'Usage data (%s)', 'plugin-tracker-sdk' ), $config->name() ),
 					'callback'               => function ( $email, $page = 1 ) use ( $config, $consent, $install ) {
 						return self::export( $config, $consent, $install, $email, $page );
 					},
@@ -64,7 +65,8 @@ class Personal_Data {
 			'wp_privacy_personal_data_erasers',
 			function ( $erasers ) use ( $config, $consent, $install, $slug ) {
 				$erasers[ 'cx-tracker-' . $slug ] = array(
-					'eraser_friendly_name' => sprintf( 'Usage data (%s)', $config->name() ),
+					/* translators: %s: the consumer plugin's display name. */
+					'eraser_friendly_name' => sprintf( __( 'Usage data (%s)', 'plugin-tracker-sdk' ), $config->name() ),
 					'callback'             => function ( $email, $page = 1 ) use ( $config, $consent, $install ) {
 						return self::erase( $config, $consent, $install, $email, $page );
 					},

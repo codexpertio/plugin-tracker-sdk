@@ -138,34 +138,15 @@ class Notice {
 	 * @return void
 	 */
 	private function render_prompt() {
-		$action = admin_url( 'admin-post.php' );
-		$text   = $this->strings();
-		?>
-		<div class="notice notice-info">
-			<p>
-				<strong><?php echo esc_html( $this->config->name() ); ?></strong>
-				<?php echo esc_html( (string) $text['intro'] ); ?>
-			</p>
-			<p>
-				<?php echo esc_html( (string) $text['sends'] ); ?>
-				<strong><?php echo esc_html( (string) $text['never'] ); ?></strong>
-			</p>
-			<p><?php echo esc_html( (string) $text['optional'] ); ?></p>
-			<p><em><?php echo esc_html( (string) $text['beta'] ); ?></em></p>
-			<form method="post" action="<?php echo esc_url( $action ); ?>" style="display:inline">
-				<?php wp_nonce_field( 'cx_tracker_consent_' . $this->config->plugin() ); ?>
-				<input type="hidden" name="action" value="cx_tracker_consent_<?php echo esc_attr( $this->config->plugin() ); ?>">
-				<input type="hidden" name="choice" value="in">
-				<?php submit_button( (string) $text['allow'], 'primary', 'submit', false ); ?>
-			</form>
-			<form method="post" action="<?php echo esc_url( $action ); ?>" style="display:inline">
-				<?php wp_nonce_field( 'cx_tracker_consent_' . $this->config->plugin() ); ?>
-				<input type="hidden" name="action" value="cx_tracker_consent_<?php echo esc_attr( $this->config->plugin() ); ?>">
-				<input type="hidden" name="choice" value="out">
-				<?php submit_button( (string) $text['decline'], 'secondary', 'submit', false ); ?>
-			</form>
-		</div>
-		<?php
+		$action       = admin_url( 'admin-post.php' );
+		$text         = $this->strings();
+		$name         = $this->config->name();
+		$plugin       = $this->config->plugin();
+		$nonce_action = 'cx_tracker_consent_' . $plugin;
+
+		// See Feedback\Deactivation::render() for why this is __DIR__-relative and why views/ has to
+		// be in bin/build-dist.sh's SOURCE_ROOTS for the path to exist in a shipped artifact.
+		include __DIR__ . '/../../views/consent/prompt.php';
 	}
 
 	/**
@@ -188,16 +169,16 @@ class Notice {
 			return;
 		}
 
+		// Reduced to a known member here rather than in the view, so the view receives a value that
+		// is already safe to place in a class attribute and cannot be handed anything else.
 		$level = isset( $notice['level'] ) && in_array( $notice['level'], array( 'error', 'warning', 'info' ), true )
 			? $notice['level']
 			: 'info';
 
-		printf(
-			'<div class="notice notice-%1$s"><p><strong>%2$s</strong> %3$s</p></div>',
-			esc_attr( $level ),
-			esc_html( $this->config->name() ),
-			esc_html( (string) $notice['message'] )
-		);
+		$name    = $this->config->name();
+		$message = (string) $notice['message'];
+
+		include __DIR__ . '/../../views/consent/server-notice.php';
 	}
 
 	/**

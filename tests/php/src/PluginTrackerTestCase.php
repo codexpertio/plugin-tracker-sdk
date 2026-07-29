@@ -34,6 +34,17 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 		$this->stub_options();
 		$this->stub_cron();
 		$this->stub_filters();
+
+		// Translation functions are ambient WordPress, in the same category as the options, cron and
+		// filter stubs above, so they are defaulted here rather than per-test. Doing it centrally is
+		// also the more deterministic choice given Brain Monkey patches PROCESS-WIDE: once any test
+		// stubs `__()`, function_exists() reports it everywhere, and a test that never stubbed it
+		// would hit "not defined nor mocked in this test" depending purely on execution order.
+		//
+		// Nothing in src/ branches on `__()` being absent -- I18n guards on load_textdomain(),
+		// determine_locale() and get_locale(), never on the gettext wrappers -- so this cannot hide
+		// a no-WordPress code path. Tests that assert on translated output still stub their own.
+		Functions\stubTranslationFunctions();
 	}
 
 	protected function tearDown(): void {
