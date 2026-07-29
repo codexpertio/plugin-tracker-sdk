@@ -157,8 +157,28 @@ src/
 ├── Cron/Scheduler.php        # jittered scheduled flush
 └── Privacy/Personal_Data.php # WP exporter/eraser registration
 
+views/
+└── feedback/                 # mirrors the namespace segment it belongs to (Feedback\)
+    ├── modal.php             # the dialog's scoped stylesheet and markup
+    └── behaviour.php         # the inline script that intercepts the Deactivate link
+
 languages/plugin-tracker-sdk.pot  # sibling of src/, shipped by bin/build-dist.sh
 ```
+
+`views/` sits outside `src/` because `src/` is the PSR-4 class tree and these files declare no
+class. They are included by `Deactivation::render()` through `__DIR__ . '/../../views/feedback/'`,
+which only resolves in a built artifact because `bin/build-dist.sh` lists `views/` in its
+`SOURCE_ROOTS` and copies it at the same depth relative to `src/`. Adding a directory of templates
+anywhere without adding it there produces an artifact that loads, passes every other check, and
+then fatals on a consumer's `plugins.php` — so the build has a dedicated verification step (VERIFY
+#4) that resolves every `__DIR__`-relative include against the artifact and fails if one is
+missing.
+
+The views are deliberately **not** overridable: no filter selects their path. The itemised
+disclosure in `modal.php` is generated from the same `site_fields()` the payload transmits, and a
+test asserts every transmitted value appears there — an override seam would let a consumer ship a
+dialog that under-discloses. Wording and translation are served by the
+`cx_tracker_feedback_strings` filter instead.
 
 `Tracker`, `Config` and `Event` sit at the root deliberately: `Tracker` is the single public entry
 point, and `Config`/`Event` are the contract types every subnamespace depends on. `I18n` and

@@ -48,6 +48,9 @@ parameters:
 	phpVersion: 70200
 	paths:
 		- src
+		# The views are plain PHP with no class of their own, but they are shipped code and they
+		# dereference the variables render() hands them -- so they are analysed like everything else.
+		- views
 
 	# php-stubs/wordpress-stubs ships pure declarations (functions/classes/constants, no bodies,
 	# no runtime define() calls -- verified: zero `define(` statements in the stub file), so

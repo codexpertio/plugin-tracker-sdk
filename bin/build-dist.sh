@@ -132,7 +132,18 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}"
 
 SRC_DIR="${ROOT_DIR}/src"
+VIEWS_DIR="${ROOT_DIR}/views"
 DIST_DIR="${ROOT_DIR}/dist"
+
+# Every directory whose *.php files are copied into the artifact, each preserved at the same path
+# relative to the package root so the relative includes between them still resolve.
+#
+# views/ is here because Feedback\Deactivation::render() includes it as
+# `__DIR__ . '/../../views/...'`. That path is only correct in the artifact because this list puts
+# views/ next to src/ there too. **Removing an entry from this list does not fail the build.** It
+# produces an artifact that loads, passes every verification below, and then fatals on a consumer's
+# plugins.php the first time somebody clicks Deactivate -- which is why VERIFY #4 exists.
+SOURCE_ROOTS=( "${SRC_DIR}" "${VIEWS_DIR}" )
 
 # The root namespace every namespace in this SDK's src/ tree sits UNDER -- not the only one it
 # has. Rewritten as a PREFIX, which is what lets one literal string cover the three root classes
@@ -140,10 +151,12 @@ DIST_DIR="${ROOT_DIR}/dist"
 # pass. See the block comment above for why that is total and unambiguous here.
 OLD_NAMESPACE='Codexpert\PluginTracker'
 
-if [[ ! -d "${SRC_DIR}" ]]; then
-	echo "error: ${SRC_DIR} does not exist" >&2
-	exit 1
-fi
+for root in "${SOURCE_ROOTS[@]}"; do
+	if [[ ! -d "${root}" ]]; then
+		echo "error: source root ${root} does not exist" >&2
+		exit 1
+	fi
+done
 
 # ---------------------------------------------------------------------------------------------
 # Determine the SDK version straight from the source of truth (Tracker::VERSION), not from
@@ -258,13 +271,14 @@ mkdir -p "${OUT_SRC_DIR}"
 # "some", not "at least one". A silent partial rewrite (e.g. because a file was skipped) would
 # otherwise pass a naive "did it run" check while still leaking the unscoped namespace.
 # ---------------------------------------------------------------------------------------------
-EXPECTED_TOTAL="$(grep -rF -o "${OLD_NAMESPACE}" "${SRC_DIR}" | wc -l | tr -d ' ')"
-echo "==> Expecting to rewrite ${EXPECTED_TOTAL} occurrence(s) of the '${OLD_NAMESPACE}' prefix in src/"
+EXPECTED_TOTAL="$(grep -rF -o "${OLD_NAMESPACE}" "${SOURCE_ROOTS[@]}" | wc -l | tr -d ' ')"
+echo "==> Expecting to rewrite ${EXPECTED_TOTAL} occurrence(s) of the '${OLD_NAMESPACE}' prefix"
+echo "    across: ${SOURCE_ROOTS[*]#"${ROOT_DIR}"/}"
 echo "    (namespace declarations, use imports and @package tags -- all prefix matches)"
 
 if [[ "${EXPECTED_TOTAL}" -eq 0 ]]; then
-	echo "error: found zero occurrences of '${OLD_NAMESPACE}' in src/ -- refusing to build" \
-		"an empty/no-op scoped copy; something is wrong with SRC_DIR or OLD_NAMESPACE" >&2
+	echo "error: found zero occurrences of '${OLD_NAMESPACE}' in the source roots -- refusing to" \
+		"build an empty/no-op scoped copy; something is wrong with SOURCE_ROOTS or OLD_NAMESPACE" >&2
 	exit 1
 fi
 
@@ -275,30 +289,35 @@ fi
 # replacement string, so there is nothing to escape incorrectly.
 # ---------------------------------------------------------------------------------------------
 ACTUAL_TOTAL=0
-while IFS= read -r -d '' file; do
-	rel="${file#"${SRC_DIR}"/}"
-	dest="${OUT_SRC_DIR}/${rel}"
-	mkdir -p "$(dirname "${dest}")"
+for root in "${SOURCE_ROOTS[@]}"; do
+	while IFS= read -r -d '' file; do
+		# Relative to the PACKAGE root, not to the source root, so src/Feedback/Deactivation.php and
+		# views/feedback/modal.php land at the same depth relative to each other in the artifact as
+		# they are here. That is what keeps the `__DIR__ . '/../../views/...'` includes resolving.
+		rel="${file#"${ROOT_DIR}"/}"
+		dest="${OUT_DIR}/${rel}"
+		mkdir -p "$(dirname "${dest}")"
 
-	count="$(php -r '
-		list(, $old, $new, $src, $dst) = $argv;
-		$code = file_get_contents($src);
-		if (false === $code) {
-			fwrite(STDERR, "read failed: $src\n");
-			exit(1);
-		}
-		$n = 0;
-		$code = str_replace($old, $new, $code, $n);
-		if (false === file_put_contents($dst, $code)) {
-			fwrite(STDERR, "write failed: $dst\n");
-			exit(1);
-		}
-		echo $n;
-	' -- "${OLD_NAMESPACE}" "${NEW_NAMESPACE}" "${file}" "${dest}")"
+		count="$(php -r '
+			list(, $old, $new, $src, $dst) = $argv;
+			$code = file_get_contents($src);
+			if (false === $code) {
+				fwrite(STDERR, "read failed: $src\n");
+				exit(1);
+			}
+			$n = 0;
+			$code = str_replace($old, $new, $code, $n);
+			if (false === file_put_contents($dst, $code)) {
+				fwrite(STDERR, "write failed: $dst\n");
+				exit(1);
+			}
+			echo $n;
+		' -- "${OLD_NAMESPACE}" "${NEW_NAMESPACE}" "${file}" "${dest}")"
 
-	echo "    ${rel}: ${count} occurrence(s) rewritten"
-	ACTUAL_TOTAL=$((ACTUAL_TOTAL + count))
-done < <(find "${SRC_DIR}" -name '*.php' -print0)
+		echo "    ${rel}: ${count} occurrence(s) rewritten"
+		ACTUAL_TOTAL=$((ACTUAL_TOTAL + count))
+	done < <(find "${root}" -name '*.php' -print0)
+done
 
 if [[ "${ACTUAL_TOTAL}" -ne "${EXPECTED_TOTAL}" ]]; then
 	echo "error: rewrote ${ACTUAL_TOTAL} occurrence(s) but expected ${EXPECTED_TOTAL} -- aborting" >&2
@@ -446,6 +465,42 @@ if [[ "${LINT_FAILED}" -ne 0 ]]; then
 	exit 1
 fi
 echo "    OK: every generated .php file passes php -l"
+
+# ---------------------------------------------------------------------------------------------
+# VERIFY #4: every `include __DIR__ . '...'` target actually exists in the artifact.
+#
+# The one failure mode none of the other checks can see. A view that was not copied leaves the
+# artifact scoped (VERIFY #1), parsing (VERIFY #2) and loading (VERIFY #3) perfectly, because
+# nothing in a load proof calls render(). The build would report success and the SDK would fatal
+# on a consumer's plugins.php the first time somebody clicked Deactivate.
+#
+# Resolved the same way PHP will resolve it: relative to the including file's own directory.
+# ---------------------------------------------------------------------------------------------
+echo "==> Verifying every __DIR__-relative include resolves inside the artifact..."
+INCLUDE_MISSING=0
+while IFS= read -r -d '' file; do
+	while IFS= read -r target; do
+		resolved="$(cd "$(dirname "${file}")" && printf '%s' "$(realpath -m "${target}")")"
+
+		if [[ ! -f "${resolved}" ]]; then
+			echo "    MISSING: ${file#"${OUT_DIR}"/} includes '${target}' -> ${resolved}" >&2
+			INCLUDE_MISSING=1
+		fi
+	# Comment lines are dropped first. The generated autoload.php documents its own integration in
+	# a docblock -- `*     require __DIR__ . '/vendor/plugin-tracker-sdk/autoload.php';` -- which is
+	# an instruction to the consumer about THEIR tree, not an include in ours, and matching it made
+	# this check fail on a correct artifact.
+	done < <(grep -vE "^[[:space:]]*(\*|//|#)" "${file}" \
+		| grep -oE "(include|require)(_once)? __DIR__ \. '[^']+'" \
+		| sed -E "s/.*__DIR__ \. '([^']+)'.*/.\1/")
+done < <(find "${OUT_DIR}" -name '*.php' -print0)
+
+if [[ "${INCLUDE_MISSING}" -ne 0 ]]; then
+	echo "error: an included file was not shipped into the artifact (see above). If you added a" \
+		"directory of templates or partials, add it to SOURCE_ROOTS near the top of this script." >&2
+	exit 1
+fi
+echo "    OK: every __DIR__-relative include resolves to a file that shipped"
 
 # ---------------------------------------------------------------------------------------------
 # VERIFY #3: end-to-end load proof.
