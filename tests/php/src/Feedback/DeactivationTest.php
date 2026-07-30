@@ -1561,6 +1561,9 @@ class DeactivationTest extends PluginTrackerTestCase {
 	 * for the anonymous telemetry stream is COLLECTED only with the telemetry opt-in, because
 	 * CONSENT.md requires consent to precede collection and not merely transmission. So with no
 	 * telemetry consent, the same submission still sends feedback and still stores nothing.
+	 *
+	 * @group launch-gate
+	 * @group gate-telemetry-consent
 	 */
 	public function test_the_telemetry_hand_off_is_consent_gated_even_though_feedback_is_not() {
 		$this->stub_handle_environment();

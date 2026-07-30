@@ -100,6 +100,9 @@ class GateTest extends PluginTrackerTestCase {
 
 	/**
 	 * An explicit opt-out record, even under the current policy, must not grant.
+	 *
+	 * @group launch-gate
+	 * @group gate-telemetry-consent
 	 */
 	public function test_granted_is_false_after_explicit_opt_out() {
 		$config = $this->make_config( array( 'enabled' => true ) );

@@ -340,6 +340,9 @@ class LifecycleTest extends PluginTrackerTestCase {
 	 * on_activate(), on_deactivate() or on_init() may queue anything -- asserted directly rather
 	 * than trusted, because a future refactor could bypass the facade and write to the queue
 	 * directly.
+	 *
+	 * @group launch-gate
+	 * @group gate-telemetry-consent
 	 */
 	public function test_nothing_is_queued_by_any_lifecycle_method_without_consent() {
 		$config = $this->make_config( array( 'enabled' => true ) );

@@ -38,6 +38,9 @@ class TrackerTest extends PluginTrackerTestCase {
 
 	/**
 	 * Gate 2 alone (author enabled) is not enough: the site admin must also have opted in.
+	 *
+	 * @group launch-gate
+	 * @group gate-telemetry-consent
 	 */
 	public function test_track_queues_nothing_when_site_has_not_opted_in() {
 		$config  = $this->make_config( array( 'enabled' => true ) );
