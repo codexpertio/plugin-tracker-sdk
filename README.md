@@ -287,16 +287,19 @@ Client and server are both complete. `Plugin_Tracker\API\Telemetry` in `plugins/
 issue #40. [`docs/WIRE.md`](docs/WIRE.md) is the contract they share.
 
 Ingestion refuses a payload whose `hash` has no enabled project, so a project has to exist before a
-site can report. Until the dashboard lands (issue #41) that is done with WP-CLI:
+site can report. The dashboard creates one at `/plugins/{slug}/telemetry`; WP-CLI is the equivalent
+from the shell, and the only route to `rotate`:
 
 ```bash
 wp pt telemetry create --plugin=my-plugin   # prints the public hash and the author secret, once
 wp pt telemetry list                        # projects, with install/event/feedback counts
+wp pt telemetry rotate <id>                 # new secret and token epoch, same public hash
 wp pt telemetry revoke <id>                 # refuse new data, keep what arrived
 ```
 
-Still outstanding: the dashboard reports and per-project export/delete (#41), and linking a project to
-an entitlement so telemetry counts against a plan (#30).
+The rest of the pipeline is built too: the dashboard reports with per-project export and delete
+(#41, `API\Telemetry_Owner`), and projects counting against a plan's telemetry allowance
+(#30, `Helpers\Entitlement`).
 
 ## License
 
