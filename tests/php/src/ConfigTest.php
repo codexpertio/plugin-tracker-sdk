@@ -30,6 +30,17 @@ class ConfigTest extends PluginTrackerTestCase {
 	 * author accidentally shipping their secret inside their published plugin.
 	 */
 	public function test_rejects_a_secret_shaped_project_id() {
+		/*
+		 * The product's OWN secret prefix (Telemetry_Provisioning::SECRET_PREFIX), not a third
+		 * party's. It was an `sk_live_...` string, which tested the same branch -- PROJECT_PATTERN
+		 * rejects anything that is not `pt_proj_*`, so the prefix was arbitrary -- while being worse
+		 * in two ways: it modelled a paste this product can never issue, and it matches a real
+		 * payment provider's live-key format, so GitHub push protection blocks the commit for
+		 * everyone who clones or forks this repository.
+		 *
+		 * `pt_sec_` is the value an author actually holds, which makes this the real worst case:
+		 * pasting their author secret where the public project id belongs.
+		 */
 		$looks_like_a_secret = 'pt_sec_8f2a9c31e6b74d0f9a1c2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d0e1f2a3b';
 
 		$config = $this->make_config( array( 'project' => $looks_like_a_secret ) );
