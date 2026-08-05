@@ -1,0 +1,40 @@
+# What leaves this repository in a dist archive.
+#
+# `export-ignore` applies to `git archive`, which is what produces a GitHub source zip AND what
+# Composer downloads for `--prefer-dist` -- the default. So everything listed here is absent from a
+# normal `composer require`, and present for anyone who clones or forks.
+#
+# It does NOT affect `git clone`, and it does not affect the namespace-scoped build from
+# bin/build-dist.sh, which assembles its output explicitly.
+#
+# ## What must never be listed here
+#
+# src/, views/ and languages/ are all RUNTIME. views/ holds the consent prompt and the deactivation
+# modal, which the SDK renders from disk; languages/ holds the .pot the text domain loads, and
+# build-dist.sh refuses to build without it. Excluding any of the three produces a package that
+# installs cleanly and then fails at the moment a site owner is asked for consent -- the worst place
+# for this to go wrong, because it is the one path that cannot be skipped.
+#
+# composer.json and LICENSE stay for obvious reasons. README.md stays because it is what Packagist
+# renders and what a developer reads inside vendor/.
+
+# Development tooling: never loaded at runtime, and a consumer cannot run them anyway without the
+# dev dependencies they need.
+/tests/             export-ignore
+/docs/              export-ignore
+/bin/               export-ignore
+/dist/              export-ignore
+/.github/           export-ignore
+
+phpunit.xml.dist    export-ignore
+phpcs.xml.dist      export-ignore
+phpstan.neon        export-ignore
+
+# Meta files with no meaning to a consumer.
+.gitattributes      export-ignore
+.gitignore          export-ignore
+
+# A library's lock file is not used by the projects that depend on it -- Composer resolves against
+# composer.json and the consuming project's own lock. Shipping it only invites confusion about which
+# versions a dependent will actually get.
+composer.lock       export-ignore
