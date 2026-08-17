@@ -52,7 +52,7 @@ Replace every `[PLACEHOLDER]` before publishing. See the notes below the block.
 This plugin uses the Plugin Tracker service in two separate ways. Neither happens without your
 agreement, and they are described separately below because they send different things.
 
-Endpoint contacted: https://app.plugintracker.dev/wp-json/plugin-tracker/v1
+Endpoint contacted: https://my.plugintracker.dev/wp-json/plugin-tracker/v1
 
 = 1. Anonymous usage data (only after you opt in) =
 
