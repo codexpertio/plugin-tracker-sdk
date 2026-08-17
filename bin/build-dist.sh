@@ -406,6 +406,45 @@ else
 	exit 1
 fi
 
+# ---------------------------------------------------------------------------------------------
+# The consumer-facing documents ship with the artifact.
+# ---------------------------------------------------------------------------------------------
+# readme-txt-block.md is the reason this section exists. It is the copy-paste WordPress.org
+# disclosure block -- the one document here written FOR the consumer rather than for whoever
+# maintains this package -- and the dashboard's integration guide sent authors to it as a path
+# inside their download. It was not in the download. WordPress.org requires a plugin that
+# transmits to a third-party service to declare it, and an undisclosed external service is one of
+# the commoner reasons a plugin is pulled, so the one obligation whose consequence lands on the
+# author pointed at a file they did not have.
+#
+# The whole directory ships rather than that one file, and the extra ~90K of markdown is worth it
+# for a specific reason: every one of these answers a question a consumer or a WP.org reviewer
+# actually asks of THEIR plugin, not of ours. CONSENT.md is the consent story a reviewer is
+# reading under the consumer's name; FEEDBACK.md and EVENTS.md are what the disclosure block is
+# enumerating, so an author who wants to check the block against the code has the code's own
+# description beside it; WIRE.md says where the data goes. Splitting them would mean deciding
+# which half of a disclosure an author is allowed to verify.
+#
+# Not optional. A missing docs/ is a build failure rather than a warning, for the same reason the
+# missing-LICENSE and missing-languages branches above are: a silently incomplete artifact is
+# indistinguishable from a complete one until somebody needs the part that is absent.
+if [ -d "${ROOT_DIR}/docs" ]; then
+	mkdir -p "${OUT_DIR}/docs"
+	find "${ROOT_DIR}/docs" -maxdepth 1 -type f -name '*.md' -exec cp {} "${OUT_DIR}/docs/" \;
+else
+	echo "error: ${ROOT_DIR}/docs is missing; refusing to build an artifact with no disclosure block" >&2
+	exit 1
+fi
+
+# The one file the integration guide names by path. Asserted separately from the directory copy
+# above, because a docs/ that exists but has lost this file is the failure that matters and the
+# directory check would pass straight through it.
+if [ ! -f "${OUT_DIR}/docs/readme-txt-block.md" ]; then
+	echo "error: docs/readme-txt-block.md did not reach the artifact; it is what an author is" \
+		"told to open to write their WordPress.org disclosure" >&2
+	exit 1
+fi
+
 cat > "${OUT_DIR}/composer.json" <<'JSONEOF'
 {
     "name": "codexpertio/plugin-tracker-sdk-scoped",

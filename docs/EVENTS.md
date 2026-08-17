@@ -89,6 +89,33 @@ Every event object carries these. All are environment facts, none identify a per
 | Post/page counts, user counts              | Business-sensitive for the site owner, and not ours.                                                                                                                                                                        |
 | Exact PHP patch version                    | Needless precision; major.minor answers the compatibility question.                                                                                                                                                         |
 
+### `collect` does not make the refused fields available
+
+`Config::COLLECTABLE` names `server`, `theme` and `plugins` alongside `wp`, `php`, `locale` and
+`multisite`, and it defaults to `'all'`. Read on its own that looks like the refusal above being
+walked back — switch them on and the theme and plugin list are transmitted. They are not, and it is
+worth being explicit about why, because the reading is a natural one and it has already produced a
+real bug.
+
+`collect` is a filter, not a source. `Tracker::common_fields()` assembles seven fields and then
+*removes* any collectable one the consumer switched off; it never builds `server`, `theme` or
+`plugins` at all, so those three are a no-op on this stream — there is nothing there to remove.
+They are in the constant because it mirrors `Telemetry_Collect::FIELDS` on the dashboard, whose
+selection governs both payloads, and `FEEDBACK.md`'s schema-2 row *does* carry them. Switching
+`plugins` off narrows what is kept from a deactivation-feedback submission. It cannot narrow this
+stream, because this stream never sent them.
+
+So the promise a consumer can make in their `readme.txt` about the usage stream is unconditional and
+does not depend on their dashboard settings: no site address, no email, no username, no IP, no theme,
+no plugin list. The settings are what narrows the feedback payload, which is disclosed separately
+because it is identified — see [`FEEDBACK.md`](FEEDBACK.md) and the block in
+[`readme-txt-block.md`](readme-txt-block.md).
+
+The dashboard's integration guide got this wrong in the other direction once (codexpertio/plugin-tracker#166),
+telling authors the usage stream sends the active theme and plugin list unless they switch them off.
+It reached the guide because the catalogue was read without reading the emitter. This section is
+here so the next reader does not have to find `common_fields()` to know.
+
 ## The six events
 
 > **The SDK raises five of these six itself.** [`Lifecycle`](../src/Lifecycle.php) is registered automatically by `Tracker::hook()` the moment `Tracker::init()` succeeds: it calls `register_activation_hook()` (fires `install` and `activate`), `register_deactivation_hook()` (fires `deactivation`), and hooks `init` at priority 20 (fires `version` and `compat` on drift). A consumer following [`SNIPPET.md`](SNIPPET.md) registers no hook and calls no `track()` for any of these five. **Only `feature` is raised by the consumer** — the SDK cannot know what a plugin's own features are, so that one call is theirs to make. `plugins/plugin-tracker-sdk-example` shows a real plugin wired this way.
