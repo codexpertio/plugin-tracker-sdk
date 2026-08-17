@@ -73,9 +73,19 @@ class Config {
 	/**
 	 * Ingestion base URL. Overridable for staging and for tests.
 	 *
+	 * This default is the one value here that ships INSIDE other people's plugins and cannot be
+	 * corrected in place: a released consumer carries whatever host was compiled into the copy they
+	 * bundled, so changing it moves only new releases and leaves every installed copy reporting to
+	 * the old host. Both have to keep answering for as long as those releases are in the wild.
+	 *
+	 * Overridable per install via the `endpoint` argument or the `CX_TRACKER_ENDPOINT` constant, which
+	 * is what staging and the test suite use. `validate()` still requires https for anything that is
+	 * not a local development host, so an override cannot quietly downgrade the transport that carries
+	 * the per-install token.
+	 *
 	 * @var string
 	 */
-	private $endpoint = 'https://app.plugintracker.dev/wp-json/plugin-tracker/v1';
+	private $endpoint = 'https://my.plugintracker.dev/wp-json/plugin-tracker/v1';
 
 	/**
 	 * Validation errors found during construction.
