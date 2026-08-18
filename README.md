@@ -223,12 +223,41 @@ composer lint               # phpcs, WPCS + PHPCompatibility 7.2-
 composer lint:fix           # phpcbf
 composer analyze            # PHPStan level 5
 composer makepot            # regenerate languages/plugin-tracker-sdk.pot
-composer dist               # build a scoped, distributable copy
+composer dist               # build a scoped, distributable copy AND package it as a zip
 composer verify-collision   # bin/verify-collision.sh -- the two-consumer collision test (see below)
 ```
 
 `composer lint` and `composer analyze` are both **clean and can gate**. Unlike
 `plugins/plugin-tracker`, this package has no violation backlog — keep it that way.
+
+### What `composer dist` produces, and the one naming rule in it
+
+```
+dist/CxTrackerSdk_v1_1_0_7fbd21/      the scoped tree
+dist/CxTrackerSdk_v1_1_0_7fbd21.zip   what a plugin author downloads
+```
+
+The **file** is named for the scoped namespace, which is how anyone looking at the backend's uploads
+directory can tell which version is being served. The backend does not care — it globs `*.zip` and
+takes the newest by mtime.
+
+The **archive unpacks to `plugin-tracker-sdk/`**, not to that name, and that is the rule worth
+knowing. The generated snippet requires `__DIR__ . '/plugin-tracker-sdk/autoload.php'`, so an author
+who unzips beside their plugin file and pastes the snippet has to land on that path or the require
+resolves to nothing and their site fatals on activation. Before 1.1.0 the zip unpacked to the scoped
+name and the integration guide asked the reader to rename it, which is a step people miss.
+
+Nothing is lost by the rename: the folder name was never what keeps two bundled copies apart — the
+scoped namespace is — and each copy lives inside its own consumer plugin's directory.
+
+The build reads the expected folder from [`docs/SNIPPET.md`](docs/SNIPPET.md) rather than hardcoding
+it, then unzips its own output to confirm the file is there. That check proves the packaging did what
+it was told; it cannot prove the layout is right, because the expectation comes from the file that
+drove the build. The disagreement that would actually hurt — this artifact against the snippet the
+**backend** generates — is checked in the monorepo's CI, which is the only place both trees exist.
+
+Uploading the zip is a manual step: `dist/` is gitignored and the artifact is served from the
+backend's uploads directory rather than shipped in the plugin.
 
 Tests follow the house layout (`tests/php/{bootstrap.php,src/,utils/}`, PSR-4
 `Codexpert\PluginTracker\Test\`), but boot through `brain/monkey` rather than the WordPress test
