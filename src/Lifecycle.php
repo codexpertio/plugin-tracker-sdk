@@ -22,6 +22,10 @@ namespace Codexpert\PluginTracker;
  *
  * Everything here routes through Tracker::track(), so the consent gate applies unchanged: with no
  * consent, nothing is queued, let alone sent.
+ *
+ * Deactivation is the one listener that also sends, rather than only queueing. It has to: it is the
+ * event whose own delivery mechanism the act of deactivating removes. Tracker::flush_on_deactivation()
+ * carries the reasoning and the cost.
  */
 class Lifecycle {
 
@@ -121,6 +125,11 @@ class Lifecycle {
 		delete_option( $key );
 
 		$this->tracker->track( Event::DEACTIVATION, $props );
+
+		// Sent now, not queued for cron. Deactivating removes the flush callback along with the
+		// rest of the plugin, so there is no later run that can deliver this -- see
+		// Tracker::flush_on_deactivation() for what goes wrong if it is left to the schedule.
+		$this->tracker->flush_on_deactivation();
 	}
 
 	/**

@@ -178,6 +178,20 @@ Raised automatically by `Lifecycle::on_deactivate()`, via `register_deactivation
 
 The deactivation survey must be dismissible and must never block deactivation.
 
+**This is the one event sent synchronously, from the page request that deactivates the plugin.**
+Every other event waits for the scheduled flush. This one cannot: `flush()` is a WP-Cron callback
+attached in `Tracker::hook()`, which runs only while the plugin is active, so deactivating queues
+the event and removes its only sender in the same breath. WP-Cron then fires the orphaned hook on
+some later request -- `wp-cron.php` calls `wp_unschedule_event()` *before* `do_action_ref_array()`,
+so the event is deleted with nothing listening -- and nothing re-arms it. Left to the schedule,
+`deactivation` is not delayed; it never arrives.
+
+So `Tracker::flush_on_deactivation()` sends it there and then, and only when something is actually
+queued. The cost is up to two blocking requests at `Transport::TIMEOUT` on a terminal, one-time
+admin action. A `spawn_cron()` loopback was rejected: `deactivate_plugins()` writes the shortened
+`active_plugins` option *after* firing this hook, so the loopback normally loses that race,
+bootstraps without the plugin, registers no callback, and WP-Cron deletes the event anyway.
+
 ## Batching and size limits
 
 | Bound | Value | Applies to |
@@ -197,7 +211,8 @@ Two of these are less obvious than they look:
   axis. And an event larger than `MAX_BYTES` could never be sent at all, so it would wedge the queue
   permanently and silently; `MAX_EVENT_BYTES` rejects it up front and `track()` returns false.
 
-- Flush happens on a scheduled job with jitter, **never during a page request** (§10.3). N consumers on one site means N
+- Flush happens on a scheduled job with jitter, **never during a page request** (§10.3), with the
+  single documented exception of `deactivation` above. N consumers on one site means N
   independent queues, so the SDK must not be what site owners blame for slowness.
 
 ## Changing this document

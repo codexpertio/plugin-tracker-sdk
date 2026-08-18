@@ -371,6 +371,59 @@ class TrackerTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * flush_on_deactivation() is that escape hatch's one real caller, and its whole reason for
+	 * existing is that the deactivation request IS a page request -- the guard tested immediately
+	 * above would otherwise stop it. wp_doing_cron() false and WP_CLI undefined here, exactly as
+	 * on a real deactivation, and the send must still happen.
+	 */
+	public function test_flush_on_deactivation_sends_from_a_page_request() {
+		list( $tracker, $config ) = $this->tracker_ready_to_send();
+		$this->seed_queue( $config, 2 );
+
+		Functions\when( 'wp_doing_cron' )->justReturn( false );
+		$this->stub_remote_response(
+			200,
+			array(
+				'success' => true,
+				'data'    => array(
+					'accepted' => 2,
+					'rejected' => 0,
+				),
+			)
+		);
+
+		$tracker->flush_on_deactivation();
+
+		$this->assertCount(
+			0,
+			$this->queue_for( $config )->all(),
+			'flush_on_deactivation() must send from the page request that is deactivating the plugin'
+		);
+	}
+
+	/**
+	 * An empty queue must cost nothing on the way out.
+	 *
+	 * flush() obtains a token before it looks at the batch, so handing it an empty queue would
+	 * still make a blocking register() call -- adding latency to an admin action for no payload,
+	 * and creating an install record for a site that is leaving. No token is seeded here, so a
+	 * missing guard shows up as a registration request rather than as nothing at all.
+	 *
+	 * This is the common case, not an edge one: on a healthy site cron drained the queue hours
+	 * before anyone clicked Deactivate.
+	 */
+	public function test_flush_on_deactivation_makes_no_request_when_the_queue_is_empty() {
+		$config = $this->make_config( array( 'enabled' => true ) );
+		$this->seed_consent( $config, Gate::POLICY, true );
+		$tracker = Tracker::init( $this->config_args( array( 'enabled' => true ) ) );
+
+		Functions\when( 'wp_doing_cron' )->justReturn( false );
+		Functions\expect( 'wp_remote_post' )->never();
+
+		$tracker->flush_on_deactivation();
+	}
+
+	/**
 	 * flush()'s consent re-check is the mechanism by which an admin's opt-out AFTER events were
 	 * already queued (with consent, at the time) wins over what is already sitting in the queue --
 	 * see docs/CONSENT.md. All three consequences of losing consent must hold together: zero HTTP
