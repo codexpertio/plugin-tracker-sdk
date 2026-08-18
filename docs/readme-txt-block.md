@@ -14,7 +14,7 @@ a reviewer finds an undisclosed call.**
 > | | Telemetry | Deactivation feedback |
 > |---|---|---|
 > | Route | `POST /telemetry/register`, `POST /telemetry/events` | `POST /telemetry/feedback` |
-> | Triggered by | A background WP-Cron job | The admin pressing a button in a dialog |
+> | Triggered by | A background WP-Cron job, plus one send on deactivation if the queue is not empty | The admin pressing a button in a dialog |
 > | How often | Repeatedly, for the life of the install | At most once per deactivation |
 > | Consent | Requires the **opt-in** | Requires the **submission itself** — it works whether or not the admin ever opted into telemetry |
 > | Site address | **Never sent** | **Sent**, and shown to the admin before they submit |
@@ -34,11 +34,16 @@ The field lists below are copied from the tables in [`EVENTS.md`](EVENTS.md) and
 contracts cannot drift apart. If you change what your own plugin sends via `Tracker::track()`,
 re-check this block against those documents first.
 
-> **Backend status caveat (not part of the text to paste):** as of this writing, [`WIRE.md`](WIRE.md)
-> documents the `/telemetry/register` and `/telemetry/events` routes as a contract awaiting its
-> server implementation (blocked on issues #43/#44), and [`FEEDBACK.md`](FEEDBACK.md) documents
-> `/telemetry/feedback` the same way. Confirm each endpoint is actually live before you publish a
-> plugin that claims to contact it — and do not disclose a route your build never calls.
+> **Disclose only the routes your build actually calls (not part of the text to paste):** all three
+> routes are implemented and serving. The rule that remains is the narrower one — a disclosure must
+> describe what your plugin does, so if you ship with the feedback modal disabled, do not claim to
+> contact `/telemetry/feedback`. Over-disclosure is not a safe default here: it describes data
+> leaving the site that never leaves it.
+>
+> (An earlier revision of this caveat said these routes were awaiting a server implementation and
+> attributed that to issues #43/#44. Both halves were wrong — the routes are live, and #43/#44 are
+> the background-jobs framework and the v2 namespace. Ingestion was #40. See the note at the top of
+> [`WIRE.md`](WIRE.md).)
 
 ---
 
@@ -73,7 +78,9 @@ Data transmitted:
 * With every event: the event name (`event`, one of `install`, `activate`, `version`, `compat`,
   `feature`, `deactivation`), the time it occurred (`at`), this plugin's slug (`plugin`) and version
   (`plugin_version`), your WordPress version (`wp`), your PHP version to major.minor precision only
-  (`php`), your site's locale (`locale`), and whether your site is a multisite (`multisite`).
+  (`php`), your site's locale (`locale`), whether your site is a multisite (`multisite`), the name of
+  your web server software with no version or hostname — for example "nginx" or "apache" (`server`) —
+  and the folder name of your active theme (`theme`).
 * Depending on the event: the previous plugin version on an upgrade/downgrade (`from`); which of
   WordPress or PHP changed and its previous value (`what`, `from`) on a compatibility check; a
   developer-defined feature name and optional use count (`name`, `count`) on feature-usage events;
@@ -81,12 +88,18 @@ Data transmitted:
   found_better, broke_site, confusing, missing_feature, other (`reason`) — on deactivation.
 
 This usage data does NOT include: your site address, admin or user email addresses, usernames, user
-IDs, IP addresses, your list of active plugins or themes, post/page content, post/page/user counts,
-or any free-text feedback.
+IDs, IP addresses, your list of other active plugins, your theme's version or its parent theme, your
+web server's version or hostname, post/page content, post/page/user counts, or any free-text
+feedback.
 
-When it is sent: registration happens once, only after you opt in. Event data is queued locally and
-sent in batches on a periodic background job (WP-Cron) — never during a page load, and never during
-plugin activation or deactivation.
+When it is sent: registration happens once, at the moment you opt in. Event data is queued locally
+and sent in batches on a periodic background job (WP-Cron), never during a page load.
+
+The one exception is deactivating this plugin. If anything is still waiting in the queue at that
+moment it is sent there and then, because the background job would otherwise run inside a plugin
+that has just been switched off and the record of the deactivation would never arrive. It is the
+same data described above and nothing more; if the queue is already empty, which is the usual case,
+nothing is sent at all.
 
 = 2. Deactivation feedback (only if you fill in the form and press Send) =
 
@@ -114,11 +127,19 @@ Data transmitted:
   (`plugin_version`), the payload schema version (`schema`), the SDK version (`sdk`), and the time
   you submitted (`at`).
 * Your WordPress version (`wp`), your PHP version to major.minor precision only (`php`), your site's
-  locale (`locale`), and whether your site is a multisite (`multisite`).
+  locale (`locale`), whether your site is a multisite (`multisite`), and the name of your web server
+  software with no version or hostname (`server`).
+* Your active theme's folder name, its version, and its parent theme's folder name if it has one
+  (`theme`, `theme_version`, `theme_parent`).
+* The folder names of your other active plugins and how many there are (`plugins`, `total_plugins`).
+  This IS sent with feedback, unlike the anonymous usage data in section 1, because "your plugin
+  broke my site" is usually a conflict with another plugin and the developers cannot reproduce it
+  without knowing what else was running. It is one of the reasons this payload is separate, opt-in
+  per submission, and shown to you in full before you send.
 
 Feedback does NOT include: your email address or anyone else's, usernames, user IDs, IP addresses,
-your list of active plugins or themes, post/page content, post/page/user counts, error logs, licence
-keys, or the anonymous install identifier described in section 1. The anonymous install identifier is
+post/page content, post/page/user counts, error logs, licence keys, or the anonymous install
+identifier described in section 1. The anonymous install identifier is
 deliberately left out so that this feedback cannot be linked back to the anonymous usage data.
 
 Before you send, the dialog lists every value above, with your actual site address and versions

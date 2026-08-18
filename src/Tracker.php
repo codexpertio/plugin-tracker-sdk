@@ -11,6 +11,7 @@ use Codexpert\PluginTracker\Config;
 use Codexpert\PluginTracker\Consent\Gate;
 use Codexpert\PluginTracker\Consent\Notice;
 use Codexpert\PluginTracker\Cron\Scheduler;
+use Codexpert\PluginTracker\Environment;
 use Codexpert\PluginTracker\Http\Transport;
 use Codexpert\PluginTracker\Feedback\Deactivation;
 use Codexpert\PluginTracker\Privacy\Personal_Data;
@@ -69,7 +70,7 @@ class Tracker {
 	 * ## Bumping this is not a cosmetic edit
 	 *
 	 * `bin/build-dist.sh` derives the artifact's scoped namespace from this value
-	 * (`CxTrackerSdk_v1_1_0_<digest>`), which is what lets two consumers bundling different versions
+	 * (`CxTrackerSdk_v1_2_0_<digest>`), which is what lets two consumers bundling different versions
 	 * coexist in one PHP process. So a bump changes the class names in every artifact built after it,
 	 * and therefore changes the snippet the dashboard must generate for anyone downloading one.
 	 *
@@ -84,8 +85,24 @@ class Tracker {
 	 * existed; and registration waited on a cron run up to a day after the administrator opted in.
 	 * Minor rather than patch because consumers gain public API -- `flush_on_deactivation()` and
 	 * `Lifecycle::on_consent()` -- and because the delivery timing of those three events changed.
+	 *
+	 * ## 1.2.0
+	 *
+	 * Every event now carries `server` and `theme`, so the dashboard's composition panels have
+	 * something to draw. They were already collected -- `Feedback\Deactivation` has sent both since
+	 * 1.0.0 -- but only on the feedback lane, which one site reaches at most once and only when its
+	 * administrator writes a message. The panels asking "what does our install base run on" were
+	 * therefore reading a near-empty table and rendering as blank, which read as a bug in the
+	 * dashboard rather than as an absence of data.
+	 *
+	 * `Event::SCHEMA` went to 2. Additive, so an ingestion endpoint that ignores unknown keys keeps
+	 * working, and the fields are optional at the other end for the frozen 1.0.0 and 1.1.0 artifacts
+	 * already in the wild -- those keep sending schema 1 forever and must keep being accepted.
+	 *
+	 * Minor rather than patch because the wire format gained fields and consumers gain public API in
+	 * `Environment`, which is where the two readings moved so both lanes share one definition.
 	 */
-	const VERSION = '1.1.0';
+	const VERSION = '1.2.0';
 
 	/**
 	 * How many times one batch may be retried before it is dropped.
@@ -330,6 +347,24 @@ class Tracker {
 			'php'            => PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION,
 			'locale'         => function_exists( 'get_locale' ) ? (string) get_locale() : '',
 			'multisite'      => function_exists( 'is_multisite' ) ? is_multisite() : false,
+
+			/*
+			 * Added in 1.2.0, which is why `schema` went to 2.
+			 *
+			 * Both are bounded readings rather than raw environment. `server()` matches
+			 * SERVER_SOFTWARE against a closed list and returns a literal from it -- `nginx`,
+			 * `apache`, `other` -- so the version and distribution in `Apache/2.4.41 (Ubuntu)` never
+			 * leave the site. `theme` is the stylesheet slug only; its version and parent go with
+			 * deactivation feedback, where a bug report wants the whole picture, and are not part of
+			 * a composition question.
+			 *
+			 * The plugin LIST is deliberately still not here. A set of forty active plugins is close
+			 * to a fingerprint even without the site address, and this stream is the one that claims
+			 * to be anonymous. It stays in the feedback payload, behind its own consent, alongside
+			 * the site URL that already identifies that submission.
+			 */
+			'server'         => Environment::server(),
+			'theme'          => Environment::theme()['slug'],
 		);
 
 		// `collect` narrows what this copy TRANSMITS. It defaults to all, and the dashboard's own

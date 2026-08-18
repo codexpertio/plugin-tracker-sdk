@@ -612,7 +612,135 @@ class TrackerTest extends PluginTrackerTestCase {
 		$tracker->flush();
 
 		$this->assertIsArray( $captured_body, 'precondition: flush() must have sent a request' );
-		$this->assertSame( 1, $captured_body['schema'], 'the wire envelope must carry the frozen Event::SCHEMA contract value' );
+		$this->assertSame( 2, $captured_body['schema'], 'the wire envelope must carry the frozen Event::SCHEMA contract value' );
+	}
+
+	/**
+	 * The 1.2.0 fields reach the queue on an ordinary event.
+	 *
+	 * They exist so the dashboard's composition panels have something to draw, and the failure this
+	 * guards against is precisely the one that shipped before: both readings were implemented and
+	 * correct, but only ever called on the feedback lane, so the panels were empty while every part
+	 * looked right in isolation.
+	 */
+	public function test_every_event_carries_the_server_and_theme_readings() {
+		$_SERVER['SERVER_SOFTWARE'] = 'nginx/1.18.0';
+
+		$config = $this->make_config( array( 'enabled' => true ) );
+		$this->seed_consent( $config, Gate::POLICY, true );
+
+		$tracker = Tracker::init( $this->config_args( array( 'enabled' => true ) ) );
+
+		$this->assertTrue( $tracker->track( 'install' ) );
+
+		$queued = $this->queue_for( $config )->all();
+
+		$this->assertSame( 'nginx', $queued[0]['server'] );
+		$this->assertSame( 'twentytwentyfour', $queued[0]['theme'] );
+	}
+
+	/**
+	 * `theme` is the slug and nothing else.
+	 *
+	 * The version and the parent are real readings that Environment::theme() returns and that the
+	 * feedback payload does send -- so the mistake available here is passing the whole array through
+	 * and widening the anonymous stream by two fields nobody agreed to. Asserting the value is a
+	 * string of the slug is what stops that.
+	 */
+	public function test_the_event_stream_carries_the_theme_slug_and_not_its_version_or_parent() {
+		$config = $this->make_config( array( 'enabled' => true ) );
+		$this->seed_consent( $config, Gate::POLICY, true );
+
+		Tracker::init( $this->config_args( array( 'enabled' => true ) ) )->track( 'install' );
+
+		$event = $this->queue_for( $config )->all()[0];
+
+		$this->assertIsString( $event['theme'] );
+		$this->assertArrayNotHasKey( 'theme_version', $event );
+		$this->assertArrayNotHasKey( 'theme_parent', $event );
+	}
+
+	/**
+	 * The plugin LIST stays off this lane, whatever `collect` says.
+	 *
+	 * `plugins` is in Config::COLLECTABLE because the feedback payload sends it, and COLLECTABLE is
+	 * one list covering both lanes. That makes "collect everything" read as though it would put a set
+	 * of active plugins on the anonymous event stream, which is the one thing that would make the
+	 * anonymity claim false -- forty plugin slugs is close to a fingerprint on its own.
+	 */
+	public function test_collecting_everything_still_does_not_put_the_plugin_list_on_an_event() {
+		$args   = $this->config_args(
+			array(
+				'enabled' => true,
+				'collect' => Config::COLLECT_ALL,
+			)
+		);
+		$config = new Config( $args );
+		$this->seed_consent( $config, Gate::POLICY, true );
+
+		Tracker::init( $args )->track( 'install' );
+
+		$this->assertArrayNotHasKey( 'plugins', $this->queue_for( $config )->all()[0] );
+	}
+
+	/**
+	 * `collect` governs the new fields too, which is the whole reason it is applied after they are
+	 * built rather than being a list of things to add.
+	 */
+	public function test_collect_can_withhold_the_environment_fields() {
+		$_SERVER['SERVER_SOFTWARE'] = 'nginx/1.18.0';
+
+		$args   = $this->config_args(
+			array(
+				'enabled' => true,
+				'collect' => array( 'wp', 'php' ),
+			)
+		);
+		$config = new Config( $args );
+		$this->seed_consent( $config, Gate::POLICY, true );
+
+		Tracker::init( $args )->track( 'install' );
+
+		$event = $this->queue_for( $config )->all()[0];
+
+		$this->assertArrayNotHasKey( 'server', $event );
+		$this->assertArrayNotHasKey( 'theme', $event );
+
+		// Precondition: the two that WERE named are still there, so this is not passing because
+		// nothing was collected at all.
+		$this->assertArrayHasKey( 'wp', $event );
+		$this->assertArrayHasKey( 'php', $event );
+	}
+
+	/**
+	 * An empty `collect` list strips every optional field but leaves the event itself intact.
+	 *
+	 * "Send no optional fields" is a legitimate instruction and the opposite of the default, so the
+	 * identifying fields an event cannot be ingested without -- name, timestamp, which plugin -- must
+	 * survive it. Config::normalize_collect() documents refusing to promote an empty list back to
+	 * COLLECT_ALL; this is the other half of that, observed on the wire.
+	 */
+	public function test_an_empty_collect_list_strips_the_optional_fields_but_not_the_event() {
+		$args   = $this->config_args(
+			array(
+				'enabled' => true,
+				'collect' => array(),
+			)
+		);
+		$config = new Config( $args );
+		$this->seed_consent( $config, Gate::POLICY, true );
+
+		Tracker::init( $args )->track( 'install' );
+
+		$event = $this->queue_for( $config )->all()[0];
+
+		foreach ( Config::COLLECTABLE as $field ) {
+			$this->assertArrayNotHasKey( $field, $event );
+		}
+
+		$this->assertSame( 'install', $event['event'] );
+		$this->assertSame( 'my-plugin', $event['plugin'] );
+		$this->assertArrayHasKey( 'at', $event );
 	}
 
 	/**

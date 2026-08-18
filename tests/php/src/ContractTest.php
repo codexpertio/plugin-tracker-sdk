@@ -60,8 +60,8 @@ class ContractTest extends PluginTrackerTestCase {
 	 * value transmitted on the wire actually equals this constant, not just that the constant holds
 	 * this value in isolation.
 	 */
-	public function test_event_schema_is_frozen_at_one() {
-		$this->assertSame( 1, Event::SCHEMA );
+	public function test_event_schema_is_frozen_at_two() {
+		$this->assertSame( 2, Event::SCHEMA );
 	}
 
 	/**

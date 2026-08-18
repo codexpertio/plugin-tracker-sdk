@@ -21,8 +21,15 @@ class Event {
 
 	/**
 	 * Payload contract version. Bump only for additive changes; see docs/EVENTS.md.
+	 *
+	 * 2 (SDK 1.2.0) added `server` and `theme` to the common fields every event carries.
+	 *
+	 * Additive, so ingestion accepts a schema-1 envelope unchanged -- which it has to, because a
+	 * bundled SDK is frozen inside a published plugin and cannot be upgraded remotely. Installs will
+	 * be sending schema 1 for as long as those releases are in the wild, and the two fields simply
+	 * arrive empty for them.
 	 */
-	const SCHEMA = 1;
+	const SCHEMA = 2;
 
 	const INSTALL      = 'install';
 	const ACTIVATE     = 'activate';
