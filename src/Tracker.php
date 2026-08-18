@@ -34,7 +34,9 @@ use Codexpert\PluginTracker\Storage\Queue;
  * both are bounded by Transport::TIMEOUT and a single batch:
  *
  *   - flush_on_deactivation(), from the deactivation hook. Deactivation destroys the mechanism that
- *     would otherwise deliver its own event, so "later" does not exist for it.
+ *     would otherwise deliver its own event, so "later" does not exist for it. Bounded further by
+ *     SYNC_BUDGET, because bulk deactivation fires this hook once per selected plugin inside a
+ *     single request.
  *   - handle_consent(), on opt-in. Scheduling alone left a site that had just agreed with up to a
  *     day of silence before it even obtained a token, which is indistinguishable from a broken
  *     integration. Registering is the point of the call, so this one is not queue-guarded.
@@ -206,6 +208,11 @@ class Tracker {
 	 */
 	public static function reset() {
 		self::$instances = array();
+
+		// The synchronous-flush budget too. It is per-request in production, where the request ends
+		// and takes the global with it; in a test process there is no such boundary, so one case
+		// spending the budget would silently disarm the next one's flush.
+		unset( $GLOBALS[ self::SYNC_BUDGET_GLOBAL ] );
 	}
 
 	/**
@@ -373,6 +380,36 @@ class Tracker {
 	}
 
 	/**
+	 * Wall-clock seconds ONE page request may spend flushing synchronously, across every scoped
+	 * copy of this SDK on the site.
+	 *
+	 * Sized to admit one complete failed attempt -- register plus send at Transport::TIMEOUT each --
+	 * and then stop. See flush_on_deactivation() for what it is defending against.
+	 */
+	const SYNC_BUDGET = 16;
+
+	/**
+	 * The global the budget is tracked in.
+	 *
+	 * A global rather than a static property, which is the whole reason this is written the awkward
+	 * way. bin/build-dist.sh rewrites each artifact into its own namespace, so ten consumers
+	 * bundling this SDK have ten DIFFERENT Tracker classes with ten separate statics -- and a
+	 * per-class static would bound each copy individually while bounding the request not at all,
+	 * which is precisely the case that needs bounding. A string key in $GLOBALS is the only thing
+	 * the scoped copies share.
+	 */
+	const SYNC_BUDGET_GLOBAL = 'cx_tracker_sync_flush_spent';
+
+	/**
+	 * Seconds of synchronous flushing already spent on this request, by any copy of this SDK.
+	 *
+	 * @return float
+	 */
+	private static function sync_spent() {
+		return isset( $GLOBALS[ self::SYNC_BUDGET_GLOBAL ] ) ? (float) $GLOBALS[ self::SYNC_BUDGET_GLOBAL ] : 0.0;
+	}
+
+	/**
 	 * Send what is queued, synchronously, because this plugin is about to stop running.
 	 *
 	 * Called from Lifecycle::on_deactivate(). This is the only place in the SDK that flushes on a
@@ -429,7 +466,30 @@ class Tracker {
 			return;
 		}
 
+		// One request's worth of blocking, shared with every other copy of this SDK on the site.
+		//
+		// Bulk deactivation is why. wp-admin's "Deactivate" bulk action passes the whole selection
+		// to deactivate_plugins(), which fires each plugin's hook inside one foreach and writes the
+		// shortened `active_plugins` option only AFTER the loop finishes. Ten selected plugins that
+		// each bundle this SDK, each holding events, against an endpoint that is timing out, is ten
+		// times up to Transport::TIMEOUT twice over -- comfortably past a default
+		// max_execution_time. The request would then die inside the loop, before the option write,
+		// and NOTHING would be deactivated: the administrator gets a timeout and a plugins page
+		// where every plugin is still active.
+		//
+		// Losing a copy's telemetry is the cheaper failure by a wide margin, so past the budget the
+		// flush is simply skipped and those events wait for a reactivation, exactly as they did
+		// before this method existed.
+		if ( self::sync_spent() >= self::SYNC_BUDGET ) {
+			return;
+		}
+
+		$started = microtime( true );
+
 		$this->flush( true );
+
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- the name IS prefixed (SYNC_BUDGET_GLOBAL is 'cx_tracker_sync_flush_spent'); the sniff cannot resolve a constant subscript, and inlining the literal to satisfy it would put the canonical name in two places.
+		$GLOBALS[ self::SYNC_BUDGET_GLOBAL ] = self::sync_spent() + ( microtime( true ) - $started );
 	}
 
 	/**
