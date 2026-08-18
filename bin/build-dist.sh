@@ -343,38 +343,62 @@ cat > "${OUT_DIR}/autoload.php" <<'PHPEOF'
  * different versions -- without their classes colliding. See bin/build-dist.sh for the full
  * reasoning.
  *
- * Usage from a consumer plugin, no Composer required:
+ * ## This file RETURNS the Tracker class name. Do not hard-code it.
  *
- *     require __DIR__ . '/vendor/plugin-tracker-sdk/autoload.php';
+ * The scoped namespace contains the SDK version, so it CHANGES on every upgrade. A consumer who
+ * wrote `__CX_PREFIX__\Tracker::init(...)` into their plugin and later dropped in a newer build
+ * would be naming a class that no longer exists -- a fatal on activation, on their users' sites,
+ * caused by an upgrade that otherwise looked complete. That is a real trap and the reason this
+ * file returns the name instead of only documenting it:
  *
- *     __CX_PREFIX__\Tracker::init( array(
- *         'project' => 'pt_proj_...',
- *         'plugin'  => 'my-plugin',
- *         'version' => '1.0.0',
- *         'file'    => __FILE__,
- *         'enabled' => true,
- *     ) );
+ *     $tracker = require __DIR__ . '/plugin-tracker-sdk/autoload.php';
+ *     $tracker::init( array( ... ) );
+ *
+ * Written that way, upgrading is replacing this folder. Nothing in the consumer's own code names
+ * a version, so nothing in it can go stale.
+ *
+ * Use `require`, NOT `require_once`. A repeated `require_once` returns `true` rather than the
+ * file's return value, so `$tracker` would be a boolean and the next line a fatal. Repeating a
+ * plain `require` is safe here because the registration below is guarded and this file is free of
+ * other side effects -- it is written to be required as many times as a consumer likes.
  */
 
-spl_autoload_register(
-	function ( $class ) {
-		$prefix = '__CX_PREFIX__\\';
-		$len    = strlen( $prefix );
+// Guarded so that requiring this file repeatedly -- which the contract above invites -- registers
+// one autoloader rather than N. The constant is version-scoped for the same reason the namespace
+// is: another plugin's bundled copy defines its own, and the two must not be mistaken for each
+// other. `define()` rather than `const` because this is conditional and not at compile time.
+if ( ! defined( '__CX_LOADED_CONST__' ) ) {
+	define( '__CX_LOADED_CONST__', true );
 
-		if ( 0 !== strncmp( $prefix, $class, $len ) ) {
-			return;
+	spl_autoload_register(
+		function ( $class ) {
+			$prefix = '__CX_PREFIX__\\';
+			$len    = strlen( $prefix );
+
+			if ( 0 !== strncmp( $prefix, $class, $len ) ) {
+				return;
+			}
+
+			$relative = substr( $class, $len );
+			$file     = __DIR__ . '/src/' . str_replace( '\\', '/', $relative ) . '.php';
+
+			if ( is_file( $file ) ) {
+				require $file;
+			}
 		}
+	);
+}
 
-		$relative = substr( $class, $len );
-		$file     = __DIR__ . '/src/' . str_replace( '\\', '/', $relative ) . '.php';
-
-		if ( is_file( $file ) ) {
-			require $file;
-		}
-	}
-);
+// The return value IS the integration contract. Keep it last, and keep it unconditional: an early
+// return above would hand the consumer `true` and turn the line after their require into a fatal.
+return '__CX_PREFIX__\\Tracker';
 PHPEOF
+# Upper-cased prefix for the guard constant: a namespace and a constant sharing one spelling read
+# as the same thing when they are not, and PHP constants are conventionally upper case.
+LOADED_CONST="$(printf '%s' "${NEW_NAMESPACE}" | tr '[:lower:]' '[:upper:]')_LOADED"
+
 sed -i \
+	-e "s/__CX_LOADED_CONST__/${LOADED_CONST}/g" \
 	-e "s/__CX_PREFIX__/${NEW_NAMESPACE}/g" \
 	-e "s/__CX_SDK_VERSION__/${SDK_VERSION}/g" \
 	"${OUT_DIR}/autoload.php"
@@ -571,7 +595,7 @@ cat > "${PROOF_FILE}" <<'PROOFEOF'
  * Load proof for a scoped SDK build. Requires nothing but the generated autoload.php.
  */
 
-require __DIR__ . '/autoload.php';
+$returned = require __DIR__ . '/autoload.php';
 
 $prefix   = '__CX_PREFIX__';
 $expected = '__CX_SDK_VERSION__';
@@ -624,7 +648,33 @@ if ( class_exists( 'Codexpert\\PluginTracker\\Tracker' ) ) {
 	proof_ok( 'unscoped Codexpert\\PluginTracker\\* is NOT loadable' );
 }
 
-// 3. The version constant survived the rewrite intact.
+// 3. The return-value contract. This is what consumer code depends on instead of hard-coding the
+//    scoped name, so it is verified here rather than trusted: a build that silently stopped
+//    returning it would hand every consumer `true` and fatal on the next line of their plugin.
+if ( $prefix . '\\Tracker' === $returned ) {
+	proof_ok( 'autoload.php returns the Tracker FQCN' );
+} else {
+	$fail = proof_fail( 'autoload.php returned ' . var_export( $returned, true ) . ', expected the Tracker FQCN' );
+}
+
+// 3b. Requiring it again returns the SAME name and does not stack a second autoloader.
+//
+//     Both halves matter. The contract tells consumers to use `require` rather than `require_once`
+//     -- because a repeated `require_once` returns true and breaks the line after it -- which means
+//     repeated execution is the NORMAL case, not an edge one. Two plugins bundling this same build
+//     is enough to reach it. Unguarded, every extra require would add another identical closure to
+//     the autoload stack, and every class miss on the site would walk all of them.
+$before = count( spl_autoload_functions() );
+$again  = require __DIR__ . '/autoload.php';
+$after  = count( spl_autoload_functions() );
+
+if ( $again === $returned && $before === $after ) {
+	proof_ok( 'requiring autoload.php twice is idempotent and registers one autoloader' );
+} else {
+	$fail = proof_fail( "second require returned " . var_export( $again, true ) . " and took the autoload stack from $before to $after" );
+}
+
+// 4. The version constant survived the rewrite intact.
 $tracker_class = $prefix . '\\Tracker';
 $actual        = constant( $tracker_class . '::VERSION' );
 
@@ -634,7 +684,7 @@ if ( $expected === $actual ) {
 	$fail = proof_fail( "Tracker::VERSION is '$actual', expected '$expected'" );
 }
 
-// 3b. I18n must resolve languages/ INSIDE the scoped copy. If build-dist.sh ever stops shipping
+// 5. I18n must resolve languages/ INSIDE the scoped copy. If build-dist.sh ever stops shipping
 //     languages/, or the copy is laid out differently, the SDK silently falls back to English --
 //     and the consent prompt is the one piece of UI a WordPress.org reviewer reads.
 $i18n_class = $prefix . '\\I18n';
@@ -646,7 +696,7 @@ if ( is_dir( $lang_dir ) && is_readable( $lang_dir . 'plugin-tracker-sdk.pot' ) 
 	$fail = proof_fail( "I18n::languages_dir() gave '$lang_dir' with no readable .pot" );
 }
 
-// 4. Construct one object from each sub-namespace. This resolves the cross-namespace `use`
+// 6. Construct one object from each sub-namespace. This resolves the cross-namespace `use`
 //    imports through real constructor type hints, not just class_exists().
 $config_class = $prefix . '\\Config';
 // Config validates that `file` is a real MAIN plugin file, because the SDK registers the activation
@@ -697,7 +747,7 @@ $privacy_class = $prefix . '\\Privacy\\Personal_Data';
 $privacy_class::register( $config, $gate, new $install_class( $config ) );
 proof_ok( 'called       ' . $privacy_class . '::register() (Config + Gate + Install type hints resolved)' );
 
-// 5. A behavioural spot-check, so the proof is not purely structural.
+// 7. A behavioural spot-check, so the proof is not purely structural.
 $event_class = $prefix . '\\Event';
 if ( $event_class::is_allowed( 'install' ) && ! $event_class::is_allowed( 'not-an-event' ) ) {
 	proof_ok( 'behaviour    ' . $event_class . '::is_allowed() still enforces the allow-list' );
