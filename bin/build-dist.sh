@@ -727,6 +727,89 @@ fi
 rm -f "${OUT_DIR}/.load-proof.php"
 echo "    OK: the scoped copy loads and works with autoload.php alone"
 
+# ------------------------------------------------------------------------------------------
+# PACKAGE
+# ------------------------------------------------------------------------------------------
+# The zip extracts to `plugin-tracker-sdk/`, NOT to the scoped namespace the build directory is
+# named after. That is deliberate and it is the one packaging decision worth arguing here.
+#
+# The generated snippet requires `__DIR__ . '/plugin-tracker-sdk/autoload.php'`. Until 1.1.0 the
+# zip extracted to `CxTrackerSdk_v1_0_0_92521f/` instead, so an author who unzipped it beside
+# their plugin file and pasted the snippet got a fatal on activation -- the require pointed at a
+# directory that did not exist. The integration guide stated the requirement ("must be named
+# exactly plugin-tracker-sdk") without ever saying to rename anything, which put the burden on
+# the reader noticing a sentence.
+#
+# Nothing is lost by renaming it. The folder name was never what kept two bundled copies apart --
+# the SCOPED NAMESPACE does that, which is the entire subject of this script -- and each copy
+# lives inside its own consumer plugin's directory, so two of them cannot collide anyway.
+#
+# The FILE name keeps the scoped form, because that one is useful: it is how a person looking at
+# the uploads directory can tell which version is being served. The backend does not care -- it
+# globs `*.zip` and takes the newest by mtime.
+#
+# Packaged here rather than by hand, so the pairing between the snippet's require path and the
+# artifact's layout is enforced by the thing that builds it.
+#
+# The folder is READ FROM docs/SNIPPET.md rather than written here as a constant, so that file is
+# the single place in this repository that decides it. Change the documented require path and the
+# artifact follows; there is no second copy to forget.
+#
+# Be clear about what the unzip check below does and does not prove. It proves the packaging did
+# what it was told -- that the staging copy and the archive agree, which is a real bug class. It
+# cannot prove the layout is the RIGHT one, because it derives the expectation from the same file
+# that drove the build.
+#
+# The disagreement that actually hurts is between this artifact and the snippet the BACKEND
+# generates, and neither repository can see both. That is checked in the monorepo's CI, in the
+# same job that checks the SDK version against Telemetry_Provisioning::DEFAULT_SDK_VERSION, for
+# the same reason: it is the only context with both trees checked out.
+SNIPPET_DOC="${ROOT_DIR}/docs/SNIPPET.md"
+
+UNPACKS_AS="$(grep -oE "require_once __DIR__ \. '/[^/]+/autoload\.php'" "${SNIPPET_DOC}" \
+	| head -n 1 \
+	| sed -E "s|.*'/([^/]+)/autoload\.php'.*|\1|")"
+
+if [ -z "${UNPACKS_AS}" ]; then
+	echo "error: could not read the require path from ${SNIPPET_DOC}." >&2
+	echo "       That file documents the snippet an author pastes, and the artifact must unpack to" >&2
+	echo "       whatever folder it requires. Fix the doc, or this check, before shipping a zip." >&2
+	exit 1
+fi
+
+ZIP_PATH="${DIST_DIR}/${NEW_NAMESPACE}.zip"
+
+if command -v zip >/dev/null 2>&1; then
+	STAGE_DIR="$(mktemp -d)"
+	trap 'rm -rf "${STAGE_DIR}"' EXIT
+
+	cp -R "${OUT_DIR}" "${STAGE_DIR}/${UNPACKS_AS}"
+
+	rm -f "${ZIP_PATH}"
+	( cd "${STAGE_DIR}" && zip -qr "${ZIP_PATH}" "${UNPACKS_AS}" )
+
+	# Proof, not assumption: the require path in the snippet has to resolve against what the
+	# author actually unzips, and the only way to know that is to unzip it.
+	CHECK_DIR="$(mktemp -d)"
+	( cd "${CHECK_DIR}" && unzip -qq "${ZIP_PATH}" )
+
+	if [ ! -f "${CHECK_DIR}/${UNPACKS_AS}/autoload.php" ]; then
+		rm -rf "${CHECK_DIR}"
+		echo "error: the zip does not unpack to ${UNPACKS_AS}/autoload.php." >&2
+		echo "       That path comes from docs/SNIPPET.md, which is what an author pastes -- so an" >&2
+		echo "       artifact laid out any other way is a fatal on their site, not a missed event." >&2
+		exit 1
+	fi
+
+	rm -rf "${CHECK_DIR}"
+
+	echo "==> Packaged: ${ZIP_PATH}"
+	echo "    Unpacks as: ${UNPACKS_AS}/  (read from docs/SNIPPET.md, which is what authors paste)"
+else
+	echo "warning: 'zip' is not installed, so no artifact was packaged." >&2
+	echo "         The build tree is complete; install zip and re-run to produce the uploadable file." >&2
+fi
+
 echo
 echo "==> Build complete: ${OUT_DIR}"
 if command -v tree >/dev/null 2>&1; then
