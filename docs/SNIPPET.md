@@ -15,25 +15,33 @@ settings screen to build.
  */
 if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
-	require_once __DIR__ . '/plugin-tracker-sdk/autoload.php';
-
 	/**
-	 * @return \CxTrackerSdk_v1_0_0_92521f\Tracker|null
+	 * @return object|null The SDK's Tracker, or null if the SDK is not present.
 	 */
 	function my_plugin_tracker() {
 		global $my_plugin_tracker;
 
 		if ( ! isset( $my_plugin_tracker ) ) {
-			$my_plugin_tracker = \CxTrackerSdk_v1_0_0_92521f\Tracker::init(
-				array(
-					'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87',
-					'file'    => __FILE__,
-					'enabled' => true,
-				)
-			);
+			$my_plugin_tracker = false;
+
+			$my_plugin_tracker_autoload = __DIR__ . '/plugin-tracker-sdk/autoload.php';
+
+			if ( is_file( $my_plugin_tracker_autoload ) ) {
+				$my_plugin_tracker_class = require $my_plugin_tracker_autoload;
+
+				if ( is_string( $my_plugin_tracker_class ) && class_exists( $my_plugin_tracker_class ) ) {
+					$my_plugin_tracker = $my_plugin_tracker_class::init(
+						array(
+							'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87',
+							'file'    => __FILE__,
+							'enabled' => true,
+						)
+					);
+				}
+			}
 		}
 
-		return $my_plugin_tracker;
+		return $my_plugin_tracker ? $my_plugin_tracker : null;
 	}
 
 	my_plugin_tracker();
@@ -47,6 +55,30 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 **`function_exists()` around the whole block.** Two plugins by the same author can each carry a
 snippet, and a snippet may survive into a copy of the plugin a user duplicated by hand. The guard
 makes the block idempotent at the file level.
+
+**Nothing in this block names the SDK version, and that is deliberate.** The scoped namespace
+contains the version (`CxTrackerSdk_v<version>_<digest>`), so it changes on every SDK upgrade. An
+earlier form of this snippet wrote that name into the author's plugin file, which made upgrading a
+two-step operation with no warning if you did only the first: drop in the new folder, forget the
+snippet, and the plugin fatals on activation with `Class "CxTrackerSdk_v1_0_0_92521f\Tracker" not
+found` — on the author's users' sites, from an upgrade that looked complete. `autoload.php` returns
+the class name instead, so replacing the folder is the whole upgrade.
+
+**The `is_file()` / `is_string()` / `class_exists()` guards, and the `null` return.** A telemetry SDK
+must never be the reason a site goes down. These make every way the SDK can be absent or broken —
+not shipped in the zip, half-extracted, wrong folder name, a build that stopped returning the class
+name — a silent no-op rather than a fatal. The author's plugin keeps working and simply reports
+nothing, which is the correct trade for a component nobody installed the plugin *for*.
+
+That is also why the block still runs when the SDK is missing: `my_plugin_tracker()` stays callable
+and returns `null`, so an author who calls it from a settings page does not have to guard every call
+site. **Do not remove these checks** to tidy the snippet — each one stands for a way a real
+download goes wrong.
+
+**`require`, not `require_once`.** The return value is the integration contract, and a repeated
+`require_once` returns `true` instead of the file's return value — which would make
+`$my_plugin_tracker_class` a boolean and the next line a fatal. Requiring the file twice is safe: it
+guards its own autoloader registration and has no other side effects.
 
 **A function wrapping a global, not a bare call.** Call it anywhere in the plugin — from a settings
 page, a CLI command, another class — and you get the same instance. Do **not** call
