@@ -13,6 +13,7 @@ use Brain\Monkey\Functions;
 use Codexpert\PluginTracker\Config;
 use Codexpert\PluginTracker\Consent\Gate;
 use Codexpert\PluginTracker\Cron\Scheduler;
+use Codexpert\PluginTracker\Event;
 use Codexpert\PluginTracker\Http\Transport;
 use Codexpert\PluginTracker\Storage\Install;
 use Codexpert\PluginTracker\Tracker;
@@ -259,25 +260,7 @@ class TrackerTest extends PluginTrackerTestCase {
 		$install = new Install( $config );
 		$before  = $install->id();
 
-		Functions\when( 'current_user_can' )->justReturn( true );
-		Functions\when( 'check_admin_referer' )->justReturn( true );
-		Functions\when( 'sanitize_key' )->alias(
-			function ( $value ) {
-				return $value;
-			}
-		);
-		Functions\when( 'wp_unslash' )->alias(
-			function ( $value ) {
-				return $value;
-			}
-		);
-		Functions\when( 'wp_get_referer' )->justReturn( '' );
-		Functions\when( 'admin_url' )->justReturn( 'https://tracker-sdk-optout-test.example/wp-admin/' );
-		Functions\when( 'wp_safe_redirect' )->alias(
-			function () {
-				throw new \RuntimeException( 'wp_safe_redirect called' );
-			}
-		);
+		$this->stub_consent_request();
 
 		$_POST['choice'] = 'out';
 
@@ -293,6 +276,145 @@ class TrackerTest extends PluginTrackerTestCase {
 		$after = $install->id();
 
 		$this->assertNotSame( $before, $after, 'opting out must forget the install salt, changing the derived install id' );
+	}
+
+	/**
+	 * The admin-post scaffolding handle_consent() runs through: capability, nonce, the two
+	 * unslash/sanitize passes over $_POST, and the redirect tail.
+	 *
+	 * wp_safe_redirect() throws a catchable exception, standing in for the real exit() that follows
+	 * it -- which would otherwise terminate the test process. Every state mutation under test
+	 * happens before that call, so the exception is caught and asserted on rather than treated as a
+	 * failure.
+	 *
+	 * @return void
+	 */
+	private function stub_consent_request() {
+		Functions\when( 'current_user_can' )->justReturn( true );
+		Functions\when( 'check_admin_referer' )->justReturn( true );
+		Functions\when( 'sanitize_key' )->alias(
+			function ( $value ) {
+				return $value;
+			}
+		);
+		Functions\when( 'wp_unslash' )->alias(
+			function ( $value ) {
+				return $value;
+			}
+		);
+		Functions\when( 'wp_get_referer' )->justReturn( '' );
+		Functions\when( 'admin_url' )->justReturn( 'https://tracker-sdk-consent-test.example/wp-admin/' );
+		Functions\when( 'wp_safe_redirect' )->alias(
+			function () {
+				throw new \RuntimeException( 'wp_safe_redirect called' );
+			}
+		);
+	}
+
+	/**
+	 * Opting in must register and send in that same request, not schedule and hope.
+	 *
+	 * ensure_scheduled() alone arms a single event jittered across the WHOLE interval, so clicking
+	 * "Allow" bought up to a day of silence before the site even obtained a token -- longer on a
+	 * low-traffic site, where WP-Cron runs only on incoming requests and may not run at all. The
+	 * observed shape of this was a consented site with no stored token, no install record and a
+	 * queue that only grew.
+	 *
+	 * Asserted on the URL, not merely on "a request happened": registration is the specific call
+	 * that was missing, and it is what creates the install record.
+	 */
+	public function test_handle_consent_opt_in_registers_in_the_same_request() {
+		$this->make_config( array( 'enabled' => true ) );
+		$tracker = Tracker::init( $this->config_args( array( 'enabled' => true ) ) );
+
+		$calls = array();
+		Functions\when( 'wp_remote_post' )->alias(
+			function ( $url, $args ) use ( &$calls ) {
+				$calls[] = array(
+					'url'  => $url,
+					'body' => json_decode( $args['body'], true ),
+				);
+				return array( 'fake' => 'response' );
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn(
+			json_encode(
+				array(
+					'success' => true,
+					'data'    => array( 'token' => 'ins_tok_fresh' ),
+				)
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_header' )->justReturn( '' );
+		Functions\when( 'home_url' )->justReturn( 'https://tracker-sdk-optin-test.example' );
+		$this->stub_consent_request();
+
+		$_POST['choice'] = 'in';
+
+		try {
+			$tracker->handle_consent();
+			$this->fail( 'handle_consent() must still reach its wp_safe_redirect()/exit tail' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( 'wp_safe_redirect called', $e->getMessage() );
+		} finally {
+			unset( $_POST['choice'] );
+		}
+
+		$this->assertNotEmpty( $calls, 'opting in must not leave the first contact to a cron run that may never happen' );
+		$this->assertStringEndsWith(
+			'/telemetry/register',
+			$calls[0]['url'],
+			'the first call on opt-in must be registration -- it is what obtains the token and creates the install record'
+		);
+
+		// And the backfill rides out on the same opt-in, rather than waiting for an activation
+		// that a plugin installed once and left running never has again.
+		$events = array();
+
+		foreach ( $calls as $call ) {
+			if ( isset( $call['body']['events'] ) ) {
+				$events = array_merge( $events, array_column( $call['body']['events'], 'event' ) );
+			}
+		}
+
+		$this->assertContains(
+			Event::INSTALL,
+			$events,
+			'opting in must report the install the site could not report before it had consent'
+		);
+	}
+
+	/**
+	 * Opting out must still make no request at all. The synchronous flush belongs to the opt-in
+	 * branch only; reaching the network on the way to recording "no" would be the one thing a
+	 * refusal must never do.
+	 *
+	 * @group launch-gate
+	 * @group gate-telemetry-consent
+	 */
+	public function test_handle_consent_opt_out_makes_no_request() {
+		$config = $this->make_config( array( 'enabled' => true ) );
+		$this->seed_consent( $config, Gate::POLICY, true );
+		$this->seed_queue( $config, 3 );
+		$tracker = Tracker::init( $this->config_args( array( 'enabled' => true ) ) );
+
+		Functions\when( 'home_url' )->justReturn( 'https://tracker-sdk-optout-request-test.example' );
+		$this->stub_consent_request();
+
+		Functions\expect( 'wp_remote_post' )->never();
+
+		$_POST['choice'] = 'out';
+
+		try {
+			$tracker->handle_consent();
+			$this->fail( 'handle_consent() must still reach its wp_safe_redirect()/exit tail' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( 'wp_safe_redirect called', $e->getMessage() );
+		} finally {
+			unset( $_POST['choice'] );
+		}
 	}
 
 	/**

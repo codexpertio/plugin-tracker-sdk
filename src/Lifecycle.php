@@ -88,9 +88,22 @@ class Lifecycle {
 		// empty", so a consumer who clears their own options cannot make the site look new.
 		$key = $this->config->option( 'installed' );
 
-		if ( ! get_option( $key ) ) {
+		// The marker is written only when the event was actually RECORDED, not merely attempted.
+		//
+		// It used to be written first, unconditionally. On a genuine first install that lost the
+		// `install` event permanently: telemetry consent does not exist yet at activation time --
+		// the opt-in notice renders on the next page load -- so track() declined and queued
+		// nothing, while the marker said the install had been reported. Every later activation
+		// then saw the marker and fired `activate` only. `install` was emitted exactly once, at
+		// the one moment it could never be delivered, which is why a consented site could sit at
+		// zero installs forever.
+		//
+		// Keyed on the return value, the marker now means what it says: this site's install has
+		// been recorded. A site that grants consent later reports its install then -- later than
+		// the truth, but the earliest point at which we were allowed to observe it. See
+		// on_consent(), which is what makes that happen without waiting for another activation.
+		if ( ! get_option( $key ) && $this->tracker->track( Event::INSTALL ) ) {
 			update_option( $key, time(), false );
-			$this->tracker->track( Event::INSTALL );
 		}
 
 		$this->tracker->track( Event::ACTIVATE );
@@ -130,6 +143,33 @@ class Lifecycle {
 		// rest of the plugin, so there is no later run that can deliver this -- see
 		// Tracker::flush_on_deactivation() for what goes wrong if it is left to the schedule.
 		$this->tracker->flush_on_deactivation();
+	}
+
+	/**
+	 * Backfill the events this site owes, now that it is allowed to report them.
+	 *
+	 * Called from Tracker::handle_consent() when an administrator opts in.
+	 *
+	 * Consent almost never exists when the activation hook fires. On a first install the opt-in
+	 * notice has not rendered yet, so on_activate() declines to record anything and returns having
+	 * queued nothing. Without this, `install` and `activate` would then wait for the NEXT
+	 * activation -- which, for a plugin somebody installs once and leaves running, never comes. The
+	 * site would report `version` and `compat` drift for years and never report existing.
+	 *
+	 * The install marker is the guard, and it is the right one: it means "this site's install has
+	 * been recorded", so an unset marker is exactly the case that needs backfilling. A site that
+	 * already reported its install gets nothing here, so a double-submitted consent form cannot
+	 * manufacture a second `activate`.
+	 *
+	 * @return void
+	 */
+	public function on_consent() {
+
+		if ( get_option( $this->config->option( 'installed' ) ) ) {
+			return;
+		}
+
+		$this->on_activate();
 	}
 
 	/**

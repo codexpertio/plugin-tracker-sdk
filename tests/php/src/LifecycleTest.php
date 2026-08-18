@@ -611,4 +611,99 @@ class LifecycleTest extends PluginTrackerTestCase {
 
 		$lifecycle->on_deactivate();
 	}
+
+	/**
+	 * 11. The install marker must record a fact, not an attempt.
+	 *
+	 * It used to be written before track() was called and regardless of what track() answered. On a
+	 * genuine first install there is no telemetry consent yet -- the opt-in notice renders on the
+	 * NEXT page load -- so track() declined, nothing was queued, and the marker nonetheless claimed
+	 * the install had been reported. Every later activation saw the marker and fired `activate`
+	 * alone. `install` was emitted exactly once, at the one moment it could never be delivered.
+	 *
+	 * That is why a consented site could sit at zero installs indefinitely while still reporting
+	 * every other event: the one event that creates the record was spent before consent existed.
+	 */
+	public function test_on_activate_without_consent_does_not_record_the_install() {
+		$config = $this->make_config( array( 'enabled' => true ) );
+		// Deliberately NOT seeding consent.
+		$lifecycle = Tracker::init( $this->config_args( array( 'enabled' => true ) ) )->lifecycle();
+
+		$lifecycle->on_activate();
+
+		$this->assertFalse(
+			$this->stored( $config, 'installed' ),
+			'an install that could not be reported must not be marked as reported'
+		);
+	}
+
+	/**
+	 * And the consequence that makes it matter: with the marker unset, the install is still owed,
+	 * so the first activation that CAN report it does.
+	 *
+	 * Without the fix this assertion fails on the second activation -- the marker set by the first
+	 * one suppresses `install` forever.
+	 */
+	public function test_install_is_reported_on_the_first_activation_after_consent_is_granted() {
+		$config    = $this->make_config( array( 'enabled' => true ) );
+		$lifecycle = Tracker::init( $this->config_args( array( 'enabled' => true ) ) )->lifecycle();
+
+		$lifecycle->on_activate(); // No consent: nothing recorded, nothing marked.
+
+		Tracker::reset();
+		$this->seed_consent( $config, Gate::POLICY, true );
+
+		$this->stub_undeliverable_flush();
+		$consented = Tracker::init( $this->config_args( array( 'enabled' => true ) ) )->lifecycle();
+		$consented->on_activate();
+
+		$this->assertCount(
+			1,
+			$this->events_named( $this->queue_for( $config )->all(), Event::INSTALL ),
+			'the install a site could not report before consent must still be reported after it'
+		);
+	}
+
+	/**
+	 * 12. on_consent() closes the gap that leaves open.
+	 *
+	 * "The next activation reports it" is not good enough for a plugin somebody installs once and
+	 * leaves running: there is no next activation. The site would report `version` and `compat`
+	 * drift for years and never report existing at all. Granting consent is the moment it becomes
+	 * observable, so that is where the backfill happens.
+	 */
+	public function test_on_consent_backfills_install_and_activate_for_a_site_that_never_reported_one() {
+		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->stub_undeliverable_flush();
+
+		$lifecycle->on_consent();
+
+		$queued = $this->queue_for( $config )->all();
+
+		$this->assertCount( 1, $this->events_named( $queued, Event::INSTALL ), 'consent must backfill the unreported install' );
+		$this->assertCount( 1, $this->events_named( $queued, Event::ACTIVATE ), 'the site is active, and that has never been reported either' );
+	}
+
+	/**
+	 * The guard on that backfill. A site that already reported its install owes nothing, and the
+	 * consent form can be submitted twice -- a double-click, a reload of the admin-post URL. Firing
+	 * again would manufacture an `activate` that never happened.
+	 */
+	public function test_on_consent_reports_nothing_when_the_install_was_already_recorded() {
+		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->stub_undeliverable_flush();
+
+		$lifecycle->on_activate(); // install + activate, marker now set.
+		$before = $this->queue_for( $config )->all();
+
+		$lifecycle->on_consent();
+
+		$this->assertSame(
+			$before,
+			$this->queue_for( $config )->all(),
+			'a site that has already reported its install must gain nothing from a second consent submission'
+		);
+	}
 }

@@ -146,6 +146,25 @@ an admin can opt out *after* events were already queued (with consent, at the ti
 decision must win. On a lost consent check, `flush()` clears the queue and unschedules the cron job
 rather than sending what's already sitting there.
 
+## Opting in registers and sends in that same request
+
+`handle_consent()` does three things on `choice=in` beyond recording the answer: it backfills the
+events the site could not report before it was allowed to (`Lifecycle::on_consent()` -- normally its
+own `install`), then flushes synchronously, then schedules.
+
+The synchronous flush is the point. `ensure_scheduled()` alone arms a single event jittered across
+the **whole** interval, so opting in bought up to a day of silence before the site even obtained a
+token -- longer on a low-traffic site, where WP-Cron runs only on incoming requests and may not run
+at all. An administrator who clicks "Allow" and then sees nothing has no way to distinguish that
+from a broken integration, and neither does anybody supporting them.
+
+Unlike the deactivation flush, this one is **not** guarded on a non-empty queue. Registering is
+precisely what has to happen: it is the call that obtains the token and creates the install record,
+so it must run even when there is nothing queued to carry it.
+
+The opt-out branch makes no request at all. Reaching the network on the way to recording a refusal
+is the one thing a refusal must never do.
+
 ## The reusable opt-in notice (`Consent\Notice`)
 
 The SDK ships a ready-made `admin_notices` prompt (`Notice::render_prompt()`) rather than leaving

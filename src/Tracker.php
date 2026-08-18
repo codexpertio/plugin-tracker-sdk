@@ -29,11 +29,20 @@ use Codexpert\PluginTracker\Storage\Queue;
  * The second is why track() only ever writes to a local queue, and why every public method
  * returns rather than throws.
  *
- * The second has exactly one exception, and naming it here rather than burying it is the point:
- * flush_on_deactivation() makes a blocking call from the deactivation hook. Deactivation destroys
- * the mechanism that would otherwise deliver its own event, so "later" does not exist for it. The
- * exception is bounded -- one batch, Transport::TIMEOUT per request, a terminal admin action that
- * happens once -- and the method's docblock argues it in full.
+ * The second has exactly two exceptions, and naming them here rather than burying them is the
+ * point. Both are admin actions the administrator initiated, neither is on a front-end request, and
+ * both are bounded by Transport::TIMEOUT and a single batch:
+ *
+ *   - flush_on_deactivation(), from the deactivation hook. Deactivation destroys the mechanism that
+ *     would otherwise deliver its own event, so "later" does not exist for it. Bounded further by
+ *     SYNC_BUDGET, because bulk deactivation fires this hook once per selected plugin inside a
+ *     single request.
+ *   - handle_consent(), on opt-in. Scheduling alone left a site that had just agreed with up to a
+ *     day of silence before it even obtained a token, which is indistinguishable from a broken
+ *     integration. Registering is the point of the call, so this one is not queue-guarded.
+ *
+ * Nothing else may be added to this list without the same argument: that the event has no later
+ * opportunity, not merely that sooner would be nicer.
  *
  * WHY THIS CLASS IS AT THE ROOT OF src/ (and Config and Event with it)
  * ---------------------------------------------------------------------------------------------
@@ -199,6 +208,11 @@ class Tracker {
 	 */
 	public static function reset() {
 		self::$instances = array();
+
+		// The synchronous-flush budget too. It is per-request in production, where the request ends
+		// and takes the global with it; in a test process there is no such boundary, so one case
+		// spending the budget would silently disarm the next one's flush.
+		unset( $GLOBALS[ self::SYNC_BUDGET_GLOBAL ] );
 	}
 
 	/**
@@ -366,6 +380,36 @@ class Tracker {
 	}
 
 	/**
+	 * Wall-clock seconds ONE page request may spend flushing synchronously, across every scoped
+	 * copy of this SDK on the site.
+	 *
+	 * Sized to admit one complete failed attempt -- register plus send at Transport::TIMEOUT each --
+	 * and then stop. See flush_on_deactivation() for what it is defending against.
+	 */
+	const SYNC_BUDGET = 16;
+
+	/**
+	 * The global the budget is tracked in.
+	 *
+	 * A global rather than a static property, which is the whole reason this is written the awkward
+	 * way. bin/build-dist.sh rewrites each artifact into its own namespace, so ten consumers
+	 * bundling this SDK have ten DIFFERENT Tracker classes with ten separate statics -- and a
+	 * per-class static would bound each copy individually while bounding the request not at all,
+	 * which is precisely the case that needs bounding. A string key in $GLOBALS is the only thing
+	 * the scoped copies share.
+	 */
+	const SYNC_BUDGET_GLOBAL = 'cx_tracker_sync_flush_spent';
+
+	/**
+	 * Seconds of synchronous flushing already spent on this request, by any copy of this SDK.
+	 *
+	 * @return float
+	 */
+	private static function sync_spent() {
+		return isset( $GLOBALS[ self::SYNC_BUDGET_GLOBAL ] ) ? (float) $GLOBALS[ self::SYNC_BUDGET_GLOBAL ] : 0.0;
+	}
+
+	/**
 	 * Send what is queued, synchronously, because this plugin is about to stop running.
 	 *
 	 * Called from Lifecycle::on_deactivate(). This is the only place in the SDK that flushes on a
@@ -422,7 +466,30 @@ class Tracker {
 			return;
 		}
 
+		// One request's worth of blocking, shared with every other copy of this SDK on the site.
+		//
+		// Bulk deactivation is why. wp-admin's "Deactivate" bulk action passes the whole selection
+		// to deactivate_plugins(), which fires each plugin's hook inside one foreach and writes the
+		// shortened `active_plugins` option only AFTER the loop finishes. Ten selected plugins that
+		// each bundle this SDK, each holding events, against an endpoint that is timing out, is ten
+		// times up to Transport::TIMEOUT twice over -- comfortably past a default
+		// max_execution_time. The request would then die inside the loop, before the option write,
+		// and NOTHING would be deactivated: the administrator gets a timeout and a plugins page
+		// where every plugin is still active.
+		//
+		// Losing a copy's telemetry is the cheaper failure by a wide margin, so past the budget the
+		// flush is simply skipped and those events wait for a reactivation, exactly as they did
+		// before this method existed.
+		if ( self::sync_spent() >= self::SYNC_BUDGET ) {
+			return;
+		}
+
+		$started = microtime( true );
+
 		$this->flush( true );
+
+		// phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedVariableFound -- the name IS prefixed (SYNC_BUDGET_GLOBAL is 'cx_tracker_sync_flush_spent'); the sniff cannot resolve a constant subscript, and inlining the literal to satisfy it would put the canonical name in two places.
+		$GLOBALS[ self::SYNC_BUDGET_GLOBAL ] = self::sync_spent() + ( microtime( true ) - $started );
 	}
 
 	/**
@@ -714,6 +781,28 @@ class Tracker {
 
 		if ( 'in' === $choice ) {
 			$this->consent->opt_in();
+
+			// Whatever this site could not report before it was allowed to -- normally its own
+			// install. See Lifecycle::on_consent().
+			$this->lifecycle->on_consent();
+
+			// Registered and sent here, synchronously, rather than left to the schedule.
+			//
+			// ensure_scheduled() alone arms a single event jittered across the WHOLE interval, so
+			// opting in bought up to a day of silence before the site even obtained a token -- on
+			// a low-traffic site, where WP-Cron only runs on incoming requests, often longer. An
+			// administrator who has just clicked "Allow" and then sees nothing has no way to tell
+			// that from a broken integration, and neither does anybody supporting them.
+			//
+			// Deliberately not the empty-queue guard flush_on_deactivation() uses. Registering IS
+			// the point here: it is what creates the install record, so it has to happen even when
+			// there is nothing queued to carry it.
+			//
+			// This is an admin_post request the administrator initiated and which redirects
+			// afterwards, so a blocking call is at its least harmful here -- no front-end request
+			// waits on it, and the action means "start sending" in as many words.
+			$this->flush( true );
+
 			$this->scheduler->ensure_scheduled();
 		} else {
 			$this->consent->opt_out();
