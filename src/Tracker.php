@@ -29,11 +29,18 @@ use Codexpert\PluginTracker\Storage\Queue;
  * The second is why track() only ever writes to a local queue, and why every public method
  * returns rather than throws.
  *
- * The second has exactly one exception, and naming it here rather than burying it is the point:
- * flush_on_deactivation() makes a blocking call from the deactivation hook. Deactivation destroys
- * the mechanism that would otherwise deliver its own event, so "later" does not exist for it. The
- * exception is bounded -- one batch, Transport::TIMEOUT per request, a terminal admin action that
- * happens once -- and the method's docblock argues it in full.
+ * The second has exactly two exceptions, and naming them here rather than burying them is the
+ * point. Both are admin actions the administrator initiated, neither is on a front-end request, and
+ * both are bounded by Transport::TIMEOUT and a single batch:
+ *
+ *   - flush_on_deactivation(), from the deactivation hook. Deactivation destroys the mechanism that
+ *     would otherwise deliver its own event, so "later" does not exist for it.
+ *   - handle_consent(), on opt-in. Scheduling alone left a site that had just agreed with up to a
+ *     day of silence before it even obtained a token, which is indistinguishable from a broken
+ *     integration. Registering is the point of the call, so this one is not queue-guarded.
+ *
+ * Nothing else may be added to this list without the same argument: that the event has no later
+ * opportunity, not merely that sooner would be nicer.
  *
  * WHY THIS CLASS IS AT THE ROOT OF src/ (and Config and Event with it)
  * ---------------------------------------------------------------------------------------------
@@ -714,6 +721,28 @@ class Tracker {
 
 		if ( 'in' === $choice ) {
 			$this->consent->opt_in();
+
+			// Whatever this site could not report before it was allowed to -- normally its own
+			// install. See Lifecycle::on_consent().
+			$this->lifecycle->on_consent();
+
+			// Registered and sent here, synchronously, rather than left to the schedule.
+			//
+			// ensure_scheduled() alone arms a single event jittered across the WHOLE interval, so
+			// opting in bought up to a day of silence before the site even obtained a token -- on
+			// a low-traffic site, where WP-Cron only runs on incoming requests, often longer. An
+			// administrator who has just clicked "Allow" and then sees nothing has no way to tell
+			// that from a broken integration, and neither does anybody supporting them.
+			//
+			// Deliberately not the empty-queue guard flush_on_deactivation() uses. Registering IS
+			// the point here: it is what creates the install record, so it has to happen even when
+			// there is nothing queued to carry it.
+			//
+			// This is an admin_post request the administrator initiated and which redirects
+			// afterwards, so a blocking call is at its least harmful here -- no front-end request
+			// waits on it, and the action means "start sending" in as many words.
+			$this->flush( true );
+
 			$this->scheduler->ensure_scheduled();
 		} else {
 			$this->consent->opt_out();

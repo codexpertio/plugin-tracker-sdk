@@ -126,6 +126,19 @@ Raised automatically by `Lifecycle::on_activate()`, via `register_activation_hoo
 
 Common fields only.
 
+**The marker records a fact, not an attempt, and that distinction is the whole event.** Telemetry
+consent does not exist when the activation hook fires on a genuine first install -- the opt-in
+notice renders on the *next* page load -- so `track()` declines and queues nothing. A marker written
+before that answer, as it once was, claimed the install had been reported while every later
+activation saw the marker and fired `activate` alone. `install` was emitted exactly once, at the one
+moment it could never be delivered, and a fully consented site could sit at zero installs forever.
+
+So the marker is written only when the event was actually recorded, and `Lifecycle::on_consent()`
+backfills at the moment consent is granted. "The next activation will report it" is not an answer
+for a plugin somebody installs once and leaves running: there is no next activation. Consequence,
+accepted: a site that consents late reports its install late. That is later than the truth and the
+earliest point at which we were permitted to observe it.
+
 ### `activate`
 
 Raised automatically by `Lifecycle::on_activate()`, via `register_activation_hook()`, on every activation -- including the one that also fires `install`. May fire repeatedly over an install's life (deactivate → reactivate).
