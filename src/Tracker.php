@@ -65,8 +65,27 @@ class Tracker {
 
 	/**
 	 * SDK version. Transmitted so ingestion can attribute traffic and drive deprecation notices.
+	 *
+	 * ## Bumping this is not a cosmetic edit
+	 *
+	 * `bin/build-dist.sh` derives the artifact's scoped namespace from this value
+	 * (`CxTrackerSdk_v1_1_0_<digest>`), which is what lets two consumers bundling different versions
+	 * coexist in one PHP process. So a bump changes the class names in every artifact built after it,
+	 * and therefore changes the snippet the dashboard must generate for anyone downloading one.
+	 *
+	 * The backend holds that pairing in `Telemetry_Provisioning::DEFAULT_SDK_VERSION`, and the two
+	 * have to move together: a snippet naming a namespace the downloaded artifact does not declare is
+	 * a fatal on the consumer's site, not a missed event.
+	 *
+	 * ## 1.1.0
+	 *
+	 * Three events that could not previously arrive now do. `deactivation` was queued into a plugin
+	 * that had just removed its own sender; `install` was consumed by a marker written before consent
+	 * existed; and registration waited on a cron run up to a day after the administrator opted in.
+	 * Minor rather than patch because consumers gain public API -- `flush_on_deactivation()` and
+	 * `Lifecycle::on_consent()` -- and because the delivery timing of those three events changed.
 	 */
-	const VERSION = '1.0.0';
+	const VERSION = '1.1.0';
 
 	/**
 	 * How many times one batch may be retried before it is dropped.
