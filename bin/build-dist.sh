@@ -816,7 +816,13 @@ echo "    OK: the scoped copy loads and works with autoload.php alone"
 # the same reason: it is the only context with both trees checked out.
 SNIPPET_DOC="${ROOT_DIR}/docs/SNIPPET.md"
 
-UNPACKS_AS="$(grep -oE "require_once __DIR__ \. '/[^/]+/autoload\.php'" "${SNIPPET_DOC}" \
+# Matched on the __DIR__-relative path alone, not on the statement around it. The snippet used to
+# open with `require_once __DIR__ . '/plugin-tracker-sdk/autoload.php';` and now assigns the path to
+# a variable first -- because autoload.php returns the Tracker class name and the snippet needs to
+# capture it -- so a pattern anchored to `require_once` silently matched nothing and took the whole
+# build down with it under `set -e`. What this check is actually about is the FOLDER, which is the
+# part that has to agree with the archive.
+UNPACKS_AS="$(grep -oE "__DIR__ \. '/[^/]+/autoload\.php'" "${SNIPPET_DOC}" \
 	| head -n 1 \
 	| sed -E "s|.*'/([^/]+)/autoload\.php'.*|\1|")"
 
