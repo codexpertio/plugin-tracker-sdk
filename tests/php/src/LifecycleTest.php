@@ -499,7 +499,10 @@ class LifecycleTest extends PluginTrackerTestCase {
 		$this->assertCount( 1, $this->events_named( $queued, Event::VERSION ) );
 		$this->assertCount( 2, $this->events_named( $queued, Event::COMPAT ) );
 
-		$common = array( 'event', 'at', 'plugin', 'plugin_version', 'wp', 'php', 'locale', 'multisite' );
+		// Everything Tracker::common_fields() puts on every event, so what is left is the event's own
+		// props. Kept in step by hand, but it fails in the safe direction: a common field added there
+		// and forgotten here surfaces as an unexpected prop on EVERY event, which is this failure.
+		$common = array( 'event', 'at', 'plugin', 'plugin_version', 'wp', 'php', 'locale', 'multisite', 'server', 'theme' );
 
 		foreach ( $queued as $event ) {
 			$name  = $event['event'];

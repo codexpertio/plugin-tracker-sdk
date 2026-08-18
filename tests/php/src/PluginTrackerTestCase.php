@@ -24,7 +24,20 @@ use PluginTracker_Test_Plugin_Header;
  */
 abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 
+	/**
+	 * $_SERVER as it was before the test.
+	 *
+	 * Process state, like the stubbed functions below: a test that writes SERVER_SOFTWARE and does
+	 * not put it back changes the answer Environment::server() gives every test that runs after it,
+	 * including the ones asserting the absent-header case. Restored centrally so no individual test
+	 * has to remember.
+	 *
+	 * @var array
+	 */
+	private $server_backup;
+
 	protected function setUp(): void {
+		$this->server_backup = $_SERVER;
 		parent::setUp();
 
 		Monkey\setUp();
@@ -34,6 +47,7 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 		$this->stub_options();
 		$this->stub_cron();
 		$this->stub_filters();
+		$this->stub_environment();
 
 		// Translation functions are ambient WordPress, in the same category as the options, cron and
 		// filter stubs above, so they are defaulted here rather than per-test. Doing it centrally is
@@ -48,6 +62,8 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 	}
 
 	protected function tearDown(): void {
+		$_SERVER = $this->server_backup;
+
 		Tracker::reset();
 		Monkey\tearDown();
 		parent::tearDown();
@@ -133,6 +149,41 @@ abstract class PluginTrackerTestCase extends PHPUnitTestCase {
 		Functions\when( 'wp_rand' )->alias(
 			function ( $min, $max ) {
 				return mt_rand( $min, $max );
+			}
+		);
+	}
+
+	/**
+	 * wp_get_theme() defaulted, for every test.
+	 *
+	 * From SDK 1.2.0 `Tracker::common_fields()` reads the active theme, so EVERY event now reaches
+	 * this function -- which means every test that tracks anything does too.
+	 *
+	 * It has to be defaulted centrally for the reason Feedback\DeactivationTest already documents one
+	 * level down: PHP cannot undefine a function, so once ANY test stubs wp_get_theme() the function
+	 * exists for the rest of the process. `Environment::theme()`'s function_exists() guard then passes
+	 * in every later test, and Brain Monkey throws "not defined nor mocked in this test" -- in tests
+	 * that never went near a theme, depending on execution order. Same hazard as wp_rand() and
+	 * apply_filters() below, same fix.
+	 *
+	 * A test that cares about the theme overrides this with its own stub.
+	 *
+	 * @return void
+	 */
+	private function stub_environment() {
+		Functions\when( 'wp_get_theme' )->justReturn(
+			new class() {
+				public function get_stylesheet() {
+					return 'twentytwentyfour';
+				}
+
+				public function get( $key ) {
+					return 'Version' === $key ? '1.0' : '';
+				}
+
+				public function parent() {
+					return false;
+				}
 			}
 		);
 	}

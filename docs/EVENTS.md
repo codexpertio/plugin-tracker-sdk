@@ -32,7 +32,7 @@ Every request carries this envelope. `schema` is what lets ingestion stay backwa
 
 | Field     | Type   | Keep/drop | Why                                                                                                                                             |
 |-----------|--------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------|
-| `schema`  | int    | **keep**  | Payload contract version. Currently `1`. Ingestion dispatches on this.                                                                          |
+| `schema`  | int    | **keep**  | Payload contract version. Currently `2`. Ingestion dispatches on this. **`1` must keep being accepted** — see below. |
 | `sdk`     | string | **keep**  | SDK semver, e.g. `1.0.0`. Records which version a site reports with, so "this version is dead" becomes evidence rather than assumption (§10.2). |
 | `hash`    | string | **keep**  | Dashboard-issued, public, non-secret plugin identifier from the pasted snippet (`Config::HASH_PATTERN`, `/^[a-f0-9]{32,64}\z/`). Says which plugin is reporting. Useless on its own. |
 | `install` | string | **keep**  | Anonymous install ID — see below.                                                                                                               |
@@ -75,6 +75,8 @@ Every event object carries these. All are environment facts, none identify a per
 | `php`            | string | `8.1`        | **keep**  | `PHP_MAJOR.PHP_MINOR` only — patch is dropped as needless precision.                  |
 | `locale`         | string | `de_DE`      | **keep**  | Where translation effort pays off. Requested by #40.                                  |
 | `multisite`      | bool   | `false`      | **keep**  | Whether to test multisite. Requested by #40.                                          |
+| `server`         | string | `nginx`      | **keep**  | Web server product only, from a closed list. Added in SDK 1.2.0 (`schema` 2).         |
+| `theme`          | string | `astra`      | **keep**  | Active theme's slug only. Added in SDK 1.2.0 (`schema` 2).                            |
 
 **Explicitly dropped**, and why each is tempting:
 
@@ -84,37 +86,59 @@ Every event object carries these. All are environment facts, none identify a per
 | Admin email, any user email                | PII. Never needed for any question the dashboard asks.                                                                                                                                                                      |
 | Username, display name, user ID            | PII.                                                                                                                                                                                                                        |
 | IP address                                 | PII under GDPR. Note the *server* sees the source IP on every request regardless — ingestion must not log or store it. That obligation is on the backend, recorded here because the SDK cannot enforce it.                  |
-| Active theme, list of other active plugins | The single most requested telemetry field and still a refusal **here**. It is a fingerprint: the set of active plugins is close to unique per site, so it re-identifies a site that the hashed install ID was designed to anonymise. Note that `FEEDBACK.md` schema 2 *does* send these — on the identified feedback payload, where the site has already named itself and the administrator read a disclosure listing them. That reversal is scoped to that payload and does not apply to this stream, where the refusal is what makes the install ID mean anything. |
-| Server hostname, OS, MySQL version         | Not needed for any stated question, and adds fingerprint surface.                                                                                                                                                           |
+| List of other active plugins               | The single most requested telemetry field and still a refusal **here**. It is a fingerprint: the set of active plugins is close to unique per site, so it re-identifies a site that the hashed install ID was designed to anonymise. Note that `FEEDBACK.md` schema 2 *does* send it — on the identified feedback payload, where the site has already named itself and the administrator read a disclosure listing it. That reversal is scoped to that payload and does not apply to this stream, where the refusal is what makes the install ID mean anything. |
+| Theme version, parent theme                | The slug is sent; these two are not. They answer a debugging question, not a composition one, so they go with deactivation feedback where a bug report wants the whole picture — and each extra field narrows the crowd a site hides in.                                                                                                                                          |
+| Server hostname, OS, MySQL version, server version | `server` reports the product — `nginx`, `apache` — and stops there. `SERVER_SOFTWARE` reads `Apache/2.4.41 (Ubuntu)`, and the version and distribution in it are exactly this row: needless precision that adds fingerprint surface, dropped for the same reason as the PHP patch level. |
 | Post/page counts, user counts              | Business-sensitive for the site owner, and not ours.                                                                                                                                                                        |
 | Exact PHP patch version                    | Needless precision; major.minor answers the compatibility question.                                                                                                                                                         |
 
-### `collect` does not make the refused fields available
+### What `collect` governs, and what it cannot
 
 `Config::COLLECTABLE` names `server`, `theme` and `plugins` alongside `wp`, `php`, `locale` and
-`multisite`, and it defaults to `'all'`. Read on its own that looks like the refusal above being
-walked back — switch them on and the theme and plugin list are transmitted. They are not, and it is
-worth being explicit about why, because the reading is a natural one and it has already produced a
-real bug.
+`multisite`, and it defaults to `'all'`. Two of those three now mean something on this stream and one
+still does not, so it is worth being exact — the loose reading has produced a real bug in each
+direction already.
 
-`collect` is a filter, not a source. `Tracker::common_fields()` assembles seven fields and then
-*removes* any collectable one the consumer switched off; it never builds `server`, `theme` or
-`plugins` at all, so those three are a no-op on this stream — there is nothing there to remove.
-They are in the constant because it mirrors `Telemetry_Collect::FIELDS` on the dashboard, whose
-selection governs both payloads, and `FEEDBACK.md`'s schema-2 row *does* carry them. Switching
-`plugins` off narrows what is kept from a deactivation-feedback submission. It cannot narrow this
-stream, because this stream never sent them.
+**`collect` is a filter, not a source.** `Tracker::common_fields()` assembles the fields and then
+*removes* any collectable one the consumer switched off. It cannot add a field that is not built.
 
-So the promise a consumer can make in their `readme.txt` about the usage stream is unconditional and
-does not depend on their dashboard settings: no site address, no email, no username, no IP, no theme,
-no plugin list. The settings are what narrows the feedback payload, which is disclosed separately
-because it is identified — see [`FEEDBACK.md`](FEEDBACK.md) and the block in
-[`readme-txt-block.md`](readme-txt-block.md).
+- **`wp`, `php`, `locale`, `multisite`, `server`, `theme`** are built on every event, so switching
+  any of them off genuinely stops it being transmitted.
+- **`plugins` is never built here**, so it is a no-op on this stream — there is nothing to remove.
+  It is in the constant because the constant mirrors `Telemetry_Collect::FIELDS` on the dashboard,
+  whose one selection governs both payloads, and `FEEDBACK.md`'s schema-2 row *does* carry it.
+  Switching `plugins` off narrows what is kept from a deactivation-feedback submission. It cannot
+  narrow this stream, because this stream never sent it.
 
-The dashboard's integration guide got this wrong in the other direction once (codexpertio/plugin-tracker#166),
-telling authors the usage stream sends the active theme and plugin list unless they switch them off.
-It reached the guide because the catalogue was read without reading the emitter. This section is
-here so the next reader does not have to find `common_fields()` to know.
+So the promise a consumer can make in their `readme.txt` about the usage stream is: no site address,
+no email, no username, no IP, no plugin list — unconditionally, whatever their dashboard settings
+say. The active theme's slug and the web server's name **are** sent from SDK 1.2.0 unless the author
+switches them off, which is a change from 1.1.0 and is why `schema` went to 2.
+
+### Why the theme was added and the plugin list was not
+
+They were one row in this table until 1.2.0 and it read as one decision. It was two.
+
+A set of forty active plugin slugs is close to unique per site: it re-identifies an install that the
+hashed ID exists to anonymise, and no amount of consent copy makes that stream anonymous again. One
+theme slug is a single value from a distribution whose head is enormous — a large share of WordPress
+sites run one of a few dozen themes — so it narrows a site to a crowd of millions rather than to
+itself. That is a difference in kind, not in degree, which is why the answer differs.
+
+`server` is the same shape of argument: the answer comes from a closed list of eight words and the
+raw header never leaves `Environment::server()`, so what is transmitted is "nginx", not a build
+string that names a host.
+
+Both were already being collected before 1.2.0 — `Feedback\Deactivation` has sent them since 1.0.0 —
+and both were already disclosed. What changed is the lane, and the reason it changed is that the
+dashboard's composition panels ask "what does our install base run on", which the feedback lane
+cannot answer: one site reaches it at most once, and only when its administrator chooses to write a
+message on deactivation. The panels were rendering blank off a near-empty table.
+
+The dashboard's integration guide got the old rule wrong in the other direction once
+(codexpertio/plugin-tracker#166), telling authors the usage stream sent the active theme and plugin
+list unless they switched them off. Half of that is now true and half is still wrong, which is a
+worse trap than the original — the guide must say the plugin list is never sent here.
 
 ## The six events
 
@@ -232,3 +256,23 @@ Two of these are less obvious than they look:
 
 Bump `schema` and add a row. Do not edit an existing field's meaning — some site somewhere is still sending version 1,
 and will be for years.
+
+### Schema history
+
+| `schema` | SDK     | Change |
+|----------|---------|--------|
+| 1        | 1.0.0   | The original envelope and common fields. |
+| 2        | 1.2.0   | Added `server` and `theme`. Additive only; no existing field changed meaning. |
+
+**Version 1 is not deprecated and cannot be.** A built SDK artifact is frozen inside whatever plugin
+bundled it, so every 1.0.0 and 1.1.0 copy in the wild keeps sending schema 1 for as long as that
+release is installed — which is years, and is not something a consumer upgrade cycle fixes, because
+the consumer has to ship a new version for their users to get a new SDK. Ingestion therefore treats
+`server` and `theme` as optional: a missing key is stored as an empty value, never as a rejected
+event.
+
+The composition panels render an absent value as a `(none)` bucket, which deliberately merges two
+different facts — "this site's SDK predates the field" and "this author switched the field off". The
+wire cannot tell them apart, because a 1.1.0 artifact and a 1.2.0 artifact with `collect` narrowed
+send the identical payload: no key. Both mean "not known", so one bucket is the honest answer; what
+would be dishonest is reading `(none)` as a server or theme that exists and was measured.
