@@ -56,6 +56,26 @@ class LifecycleTest extends PluginTrackerTestCase {
 	}
 
 	/**
+	 * Make the synchronous deactivation flush fail, so the queue survives for inspection.
+	 *
+	 * on_deactivate() no longer only queues: it also sends, in the same request, because
+	 * deactivating removes the WP-Cron listener that would otherwise deliver the event
+	 * (Tracker::flush_on_deactivation()). A successful send therefore empties the queue -- and the
+	 * tests below are about what Lifecycle BUILDS, which the queue is the visible record of.
+	 * TrackerTest owns what Transport ships.
+	 *
+	 * A 503 is stubbed rather than the flush being suppressed, so these tests keep exercising the
+	 * real code path. Registration fails, flush() returns before it reaches the batch, and the
+	 * queue is left untouched -- behaviour the suite already pins elsewhere. Nothing here is
+	 * weakened to accommodate the fix; the subject and the premise of each test are unchanged.
+	 *
+	 * @return void
+	 */
+	private function stub_undeliverable_flush() {
+		$this->stub_remote_response( 503, array( 'success' => false ) );
+	}
+
+	/**
 	 * 1. A fresh install -- no `env` option stored yet -- must not report a spurious version or
 	 * compat change on its very first init(). Without this, every fresh install looks like a
 	 * phantom upgrade (see the comment above the empty-$seen guard in Lifecycle::on_init()). It must
@@ -108,6 +128,8 @@ class LifecycleTest extends PluginTrackerTestCase {
 	 */
 	public function test_deactivate_reactivate_cycle_does_not_refire_install() {
 		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->stub_undeliverable_flush();
 
 		$lifecycle->on_activate();
 		$lifecycle->on_deactivate();
@@ -272,6 +294,8 @@ class LifecycleTest extends PluginTrackerTestCase {
 	public function test_on_deactivate_with_a_valid_stashed_reason_includes_it_and_clears_the_stash() {
 		list( , $config, $lifecycle ) = $this->ready_lifecycle();
 
+		$this->stub_undeliverable_flush();
+
 		$this->seed_stored(
 			$config,
 			'reason',
@@ -299,6 +323,8 @@ class LifecycleTest extends PluginTrackerTestCase {
 	public function test_on_deactivate_without_a_stashed_reason_carries_no_reason_key() {
 		list( , $config, $lifecycle ) = $this->ready_lifecycle();
 
+		$this->stub_undeliverable_flush();
+
 		$lifecycle->on_deactivate();
 
 		$queued = $this->queue_for( $config )->all();
@@ -314,6 +340,8 @@ class LifecycleTest extends PluginTrackerTestCase {
 	 */
 	public function test_a_stashed_reason_does_not_leak_into_a_later_deactivation() {
 		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->stub_undeliverable_flush();
 
 		$this->seed_stored(
 			$config,
@@ -432,6 +460,8 @@ class LifecycleTest extends PluginTrackerTestCase {
 	public function test_every_event_lifecycle_emits_satisfies_event_validate_props() {
 		list( , $config, $lifecycle ) = $this->ready_lifecycle();
 
+		$this->stub_undeliverable_flush();
+
 		$lifecycle->on_activate(); // install + activate.
 
 		$this->seed_stored(
@@ -505,5 +535,80 @@ class LifecycleTest extends PluginTrackerTestCase {
 		$this->assertFalse( $this->stored( $config, 'env' ) );
 		$this->assertFalse( $this->stored( $config, 'installed' ) );
 		$this->assertFalse( $this->stored( $config, 'reason' ) );
+	}
+
+	/**
+	 * 10. The fix for the event that could never arrive.
+	 *
+	 * `deactivation` used to be queued and then abandoned. flush() is a WP-Cron callback attached
+	 * in Tracker::hook(), which runs only while the plugin is active, so deactivating queued the
+	 * event and removed its only sender in the same request. WP-Cron then fired the orphaned hook
+	 * on some later request -- wp-cron.php calls wp_unschedule_event() BEFORE
+	 * do_action_ref_array(), so the event was deleted with nothing listening -- and
+	 * Scheduler::ensure_scheduled() never re-armed it, being active-only too. The event sat in the
+	 * queue until a reactivation that, for an uninstall, never comes.
+	 *
+	 * So this asserts delivery, not queueing: the request must actually leave, and it must carry
+	 * the deactivation event. Asserting only "the queue is empty afterwards" would pass equally if
+	 * the queue were simply discarded.
+	 */
+	public function test_on_deactivate_sends_the_deactivation_event_in_the_same_request() {
+		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->seed_token( $config );
+
+		$captured_body = null;
+		Functions\when( 'wp_remote_post' )->alias(
+			function ( $url, $args ) use ( &$captured_body ) {
+				$captured_body = json_decode( $args['body'], true );
+				return array( 'fake' => 'response' );
+			}
+		);
+		Functions\when( 'is_wp_error' )->justReturn( false );
+		Functions\when( 'wp_remote_retrieve_response_code' )->justReturn( 200 );
+		Functions\when( 'wp_remote_retrieve_body' )->justReturn(
+			json_encode(
+				array(
+					'success' => true,
+					'data'    => array( 'accepted' => 1 ),
+				)
+			)
+		);
+		Functions\when( 'wp_remote_retrieve_header' )->justReturn( '' );
+		Functions\when( 'home_url' )->justReturn( 'https://tracker-sdk-deactivation-test.example' );
+
+		$lifecycle->on_deactivate();
+
+		$this->assertIsArray( $captured_body, 'on_deactivate() must send in the same request, not leave the event for a cron run that can no longer happen' );
+		$this->assertCount(
+			1,
+			$this->events_named( $captured_body['events'], Event::DEACTIVATION ),
+			'the request on_deactivate() sends must carry the deactivation event itself'
+		);
+		$this->assertSame(
+			array(),
+			$this->queue_for( $config )->all(),
+			'a delivered batch must leave the queue empty'
+		);
+	}
+
+	/**
+	 * The new send inherits the consent gate rather than sitting beside it.
+	 *
+	 * Without consent, track() declines and nothing is queued, so flush_on_deactivation() must
+	 * find an empty queue and make no request at all. Worth pinning separately from test 7 above:
+	 * that one asserts nothing is QUEUED without consent, which a flush added below it could
+	 * satisfy while still transmitting. Here the assertion is on the wire.
+	 *
+	 * @group launch-gate
+	 * @group gate-telemetry-consent
+	 */
+	public function test_on_deactivate_makes_no_request_without_consent() {
+		// Deliberately NOT seeding consent.
+		$lifecycle = Tracker::init( $this->config_args( array( 'enabled' => true ) ) )->lifecycle();
+
+		Functions\expect( 'wp_remote_post' )->never();
+
+		$lifecycle->on_deactivate();
 	}
 }

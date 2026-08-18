@@ -29,6 +29,12 @@ use Codexpert\PluginTracker\Storage\Queue;
  * The second is why track() only ever writes to a local queue, and why every public method
  * returns rather than throws.
  *
+ * The second has exactly one exception, and naming it here rather than burying it is the point:
+ * flush_on_deactivation() makes a blocking call from the deactivation hook. Deactivation destroys
+ * the mechanism that would otherwise deliver its own event, so "later" does not exist for it. The
+ * exception is bounded -- one batch, Transport::TIMEOUT per request, a terminal admin action that
+ * happens once -- and the method's docblock argues it in full.
+ *
  * WHY THIS CLASS IS AT THE ROOT OF src/ (and Config and Event with it)
  * ---------------------------------------------------------------------------------------------
  * src/ is organised into sub-namespaces by responsibility -- Consent\, Storage\, Http\, Cron\,
@@ -357,6 +363,66 @@ class Tracker {
 		// apply() owns rescheduling from here: a retry needs a short backoff rather than a full
 		// interval, so the decision belongs with the code that classifies the result.
 		$this->apply( $sent, $batch );
+	}
+
+	/**
+	 * Send what is queued, synchronously, because this plugin is about to stop running.
+	 *
+	 * Called from Lifecycle::on_deactivate(). This is the only place in the SDK that flushes on a
+	 * page request, and the exception is narrow on purpose.
+	 *
+	 * ## Why the scheduled path cannot deliver a deactivation
+	 *
+	 * flush() is a WP-Cron callback, and the `add_action()` that attaches it lives in hook(),
+	 * which runs only while the plugin is active. Deactivating therefore queues the event and, in
+	 * the same breath, removes the only listener that could ever send it.
+	 *
+	 * What happens next is worse than a delay. WP-Cron fires the scheduled hook on some later
+	 * request and wp-cron.php calls wp_unschedule_event() BEFORE do_action_ref_array(), so the
+	 * event is deleted whether or not anything is listening. Nothing re-arms it, because
+	 * Scheduler::ensure_scheduled() also runs only while active. The queued `deactivation` event
+	 * is then stranded until somebody reactivates the plugin -- which, for an uninstall, is never.
+	 *
+	 * So deactivation is not "the event that arrives a day late". It is the one event guaranteed
+	 * never to arrive, and the one churn analysis most needs.
+	 *
+	 * ## Why not spawn_cron()
+	 *
+	 * The obvious non-blocking answer -- schedule for now, then spawn_cron() a loopback request --
+	 * loses the event outright most of the time. deactivate_plugins() fires this hook and only
+	 * afterwards writes the shortened `active_plugins` option, so the loopback races that write
+	 * and normally loses: it bootstraps WordPress a few milliseconds later, reads the option
+	 * without this plugin in it, registers no callback, and wp-cron.php deletes the event anyway.
+	 * A mechanism that silently destroys the event it was added to deliver is worse than no
+	 * mechanism, and it would fail intermittently, which is worse still.
+	 *
+	 * ## What this costs
+	 *
+	 * Up to two blocking requests at Transport::TIMEOUT (8s) each -- register(), if this site
+	 * never obtained a token, then the send. Around 16s worst case added to one admin action,
+	 * against a dead endpoint. That is a real cost and it is accepted rather than hidden:
+	 * deactivation is terminal and happens once, there is no later opportunity, and WordPress
+	 * itself makes blocking calls on comparable admin actions.
+	 *
+	 * Only one batch is sent (Queue::MAX_BATCH), not the whole queue drained in a loop. A site
+	 * with a full 200-event backlog therefore leaves some behind, including possibly the
+	 * deactivation event itself, since the queue is FIFO. That only arises when the endpoint has
+	 * been failing for a long time, in which case this flush fails too -- and one blocking
+	 * request is the entire budget an admin request should spend on telemetry.
+	 *
+	 * @return void
+	 */
+	public function flush_on_deactivation() {
+
+		// Checked before flush() rather than left to it: flush() obtains a token before it looks
+		// at the batch, so an empty queue would still cost a blocking register() call -- and
+		// would register an install for a site that is on its way out. An empty queue is the
+		// normal case here, because cron will usually have drained it already.
+		if ( 0 === $this->queue->count() ) {
+			return;
+		}
+
+		$this->flush( true );
 	}
 
 	/**

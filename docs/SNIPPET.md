@@ -122,11 +122,11 @@ Everything, without further involvement from the author:
 | Hook | What the SDK does |
 |---|---|
 | `register_activation_hook` | `install` on the first activation ever, `activate` on every one |
-| `register_deactivation_hook` | `deactivation`, carrying the reason the modal collected if there is one |
+| `register_deactivation_hook` | `deactivation`, carrying the reason the modal collected if there is one — and sends it in the same request, because nothing later can |
 | `init` | Detects a plugin-version change (`version`) and a WP or PHP change (`compat`) |
 | `admin_notices` | The consent prompt, until the administrator answers it |
 | `admin_footer-plugins.php` | The deactivation-feedback modal, on this plugin's row only |
-| A scheduled job | The jittered flush; never on a page request |
+| A scheduled job | The jittered flush; never on a page request, except the deactivation above |
 
 Version and compat are detected on `init` rather than on activation because a plugin updated in
 place — the normal case — never fires the activation hook again. An integration relying on
@@ -140,4 +140,6 @@ activation alone would never see an upgrade.
 - Do not register your own activation/deactivation hooks *for telemetry*. The SDK has them. Your own
   hooks for your own purposes are unaffected.
 - Do not call `flush()` from a page request. It refuses outside WP-Cron and WP-CLI for a reason.
+  The SDK makes exactly one exception for itself, on deactivation, because that event has no later
+  chance to be sent -- see [`EVENTS.md`](EVENTS.md#deactivation).
 - Do not edit the hash or the namespace prefix.
