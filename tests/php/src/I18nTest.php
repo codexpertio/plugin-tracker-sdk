@@ -22,8 +22,8 @@ class I18nTest extends PluginTrackerTestCase {
 	}
 
 	/**
-	 * The .pot template must ship, or translators have nothing to work from and bin/build-dist.sh
-	 * has nothing to copy into the artifact.
+	 * The .pot template must ship, or translators have nothing to work from and a bundled copy
+	 * renders untranslated. `.gitattributes` is what keeps languages/ in the release archive.
 	 */
 	public function test_the_languages_directory_and_pot_template_exist() {
 		$dir = I18n::languages_dir();

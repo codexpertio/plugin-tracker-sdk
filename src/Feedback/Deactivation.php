@@ -345,7 +345,7 @@ class Deactivation {
 		if ( function_exists( 'sanitize_textarea_field' ) ) {
 			$note = (string) sanitize_textarea_field( $note );
 		} else {
-			// Only reachable outside WordPress -- the load proof in bin/build-dist.sh constructs
+			// Only reachable outside WordPress, which the unit tests do: they construct
 			// SDK objects with no WP loaded at all. Strips tags and control characters so the bound
 			// below is applied to plain text on either path, rather than silently skipping
 			// sanitisation when the WP helper is missing.
@@ -989,9 +989,9 @@ class Deactivation {
 		// reserved for the PSR-4 class tree. The subdirectory mirrors this class's own namespace
 		// segment, so views/feedback/ is to Feedback\ what views/consent/ would be to Consent\.
 		//
-		// bin/build-dist.sh lists views/ in SOURCE_ROOTS and copies it alongside src/ at the same
-		// relative depth, which is the only reason this path resolves in the scoped artifact. Drop
-		// it from that list and this include fatals on a consumer's plugins.php.
+		// The release archive keeps views/ alongside src/ at the same relative depth, which is the
+		// only reason this path resolves in a bundled copy. Add views/ to .gitattributes'
+		// export-ignore list and this include fatals on a consumer's plugins.php.
 		include __DIR__ . '/../../views/feedback/modal.php';
 		include __DIR__ . '/../../views/feedback/behaviour.php';
 	}
@@ -1006,8 +1006,9 @@ class Deactivation {
 	 *
 	 * Scoped under this consumer's own element id so two bundled copies on one plugins.php cannot
 	 * restyle each other. Duplication between copies is accepted deliberately: a shared, deduped
-	 * stylesheet would mean one copy's CSS governing another copy's markup, which is precisely the
-	 * cross-version coupling bin/build-dist.sh exists to eliminate.
+	 * stylesheet would mean one copy's CSS governing another copy's markup. That mattered more when
+	 * each copy was namespace-scoped and genuinely independent; with scoping gone the classes are
+	 * shared anyway, and keeping the CSS per-element is the one isolation still worth having.
 	 *
 	 * @param string $id Root element id.
 	 * @return string

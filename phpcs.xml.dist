@@ -90,9 +90,9 @@
 		because the namespace does not begin with "cx_tracker".
 
 		Collision safety, which is the sniff's actual concern, is handled here twice over and by a
-		stronger mechanism: PSR-4 namespacing, plus bin/build-dist.sh rewriting the namespace to a
-		per-version prefix for every distributed copy. That build step exists precisely because
-		several consumers on one site may each bundle a different version of this SDK.
+		stronger mechanism: PSR-4 namespacing under a vendor-specific root. Per-version namespace
+		rewriting used to back this up as well; it was dropped, so two consumers bundling different
+		versions now share whichever copy loads first. autoload.php says so plainly.
 
 		Excluded rather than silenced file by file, because it is a systemic mismatch between the
 		sniff and a namespaced library, not 19 individual defects.

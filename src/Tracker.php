@@ -69,7 +69,7 @@ class Tracker {
 	 *
 	 * ## Bumping this is not a cosmetic edit
 	 *
-	 * `bin/build-dist.sh` derives the artifact's scoped namespace from this value
+	 * The release workflow refuses to publish a tag that disagrees with this value
 	 * (`CxTrackerSdk_v1_2_0_<digest>`), which is what lets two consumers bundling different versions
 	 * coexist in one PHP process. So a bump changes the class names in every artifact built after it,
 	 * and therefore changes the snippet the dashboard must generate for anyone downloading one.
@@ -445,12 +445,17 @@ class Tracker {
 	/**
 	 * The global the budget is tracked in.
 	 *
-	 * A global rather than a static property, which is the whole reason this is written the awkward
-	 * way. bin/build-dist.sh rewrites each artifact into its own namespace, so ten consumers
-	 * bundling this SDK have ten DIFFERENT Tracker classes with ten separate statics -- and a
-	 * per-class static would bound each copy individually while bounding the request not at all,
-	 * which is precisely the case that needs bounding. A string key in $GLOBALS is the only thing
-	 * the scoped copies share.
+	 * A global rather than a static property, and the reason has changed without the choice needing
+	 * to. It was written this way when each artifact was rewritten into its own namespace: ten
+	 * consumers bundling the SDK had ten DIFFERENT Tracker classes with ten separate statics, so a
+	 * per-class static bounded each copy individually and bounded the REQUEST not at all -- which is
+	 * the thing that actually needs bounding. A string key in $GLOBALS was the only thing the scoped
+	 * copies shared.
+	 *
+	 * Scoping is gone, so all bundled copies now resolve to one class and a static would work. This
+	 * stays a global anyway: it is still correct, it is what every already-published copy uses, and a
+	 * mixed site -- one plugin on an old scoped build, one on a new one -- keeps sharing the budget
+	 * only for as long as the shared key survives.
 	 */
 	const SYNC_BUDGET_GLOBAL = 'cx_tracker_sync_flush_spent';
 
