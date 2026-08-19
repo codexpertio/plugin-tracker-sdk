@@ -88,10 +88,20 @@ jobs:
       # the first author who unzips it.
       - name: Refuse an archive that a consumer cannot integrate
         run: |
+          # Listed once into a file, then grepped, rather than re-piped per path.
+          #
+          # The pipe was wrong, not just wasteful. This step runs under `set -o pipefail`, and
+          # `grep -q` exits the moment it matches -- which hands `tar` a SIGPIPE, fails the pipeline,
+          # and reports a file as ABSENT precisely when it is PRESENT. The first run of this workflow
+          # flagged composer.json that way while correctly flagging autoload.php, which is how a guard
+          # earns the wrong kind of reputation.
+          git archive --format=tar HEAD > /tmp/release-archive.tar
+          tar -tf /tmp/release-archive.tar > /tmp/release-archive.list
+
           missing=0
 
           for path in autoload.php src/Tracker.php composer.json; do
-            if ! git archive --format=tar HEAD | tar -t | grep -qx "${path}"; then
+            if ! grep -qx -- "${path}" /tmp/release-archive.list; then
               echo "::error::${path} is absent from the release archive. Check .gitattributes -- export-ignore governs what git archive emits, and it is what GitHub serves."
               missing=1
             fi
