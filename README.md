@@ -30,14 +30,19 @@ resolved `Codexpert\PluginTracker\Tracker`, and pasting the wrong snippet was a 
 Identical code, identical namespace, either way now.
 
 ```bash
-composer require codexpertio/plugin-tracker-sdk
+composer require codexpertio/plugin-tracker-sdk:^1.2
 ```
 
-Unconstrained deliberately, and it does not resolve yet. Packagist has this package registered but
-has never crawled it — it reports `crawledAt: null` and lists only `dev-master` and a few `dev-*`
-branches, so the `v1.2.0` tag was never ingested and `:^1.2` matched nothing. The release workflow
-notifies Packagist on every tag now; pin the constraint again once a tagged release is actually
-listed there.
+Pin the constraint — `:^1.2` — for anything shipped to sites you do not control. Composer falls back
+to the default branch when a constraint cannot resolve, and `dev-master` inside a distributed plugin
+is a moving target on somebody else's site.
+
+One caveat if you go checking: `packagist.org/packages/codexpertio/plugin-tracker-sdk.json` reports
+`crawledAt: null` and lists only `dev-*` branches, which reads as though nothing is published. It is
+not the endpoint Composer uses. `repo.packagist.org/p2/...` lists `v1.2.0`, and a real
+`composer require codexpertio/plugin-tracker-sdk:^1.2` locks it. The repository is connected to
+Packagist through its GitHub integration and picks up pushed tags on its own, which is why the
+release workflow does not notify it.
 
 The alternative is the **source archive for a tag**, unzipped beside your main plugin file:
 

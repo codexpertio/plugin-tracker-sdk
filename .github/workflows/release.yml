@@ -5,10 +5,16 @@ name: Release
 #
 # WHY THIS EXISTS
 #
-# Nothing published this repository's tags. v1.2.0 existed on the remote with no release and no
-# Packagist version: Packagist reported `crawledAt: null` and listed only dev-master and three dev-*
-# branches, so `composer require codexpertio/plugin-tracker-sdk:^1.2` resolved to nothing for
-# everyone who ran it. Tagging was a local act with no consequence anywhere.
+# Nothing published this repository's tags. v1.2.0 existed on the remote with no release, so there was
+# no archive for the dashboard to hand an author and tagging was a local act with no consequence
+# anywhere.
+#
+# WHAT THIS DELIBERATELY DOES NOT DO
+#
+# It does not notify Packagist, because nothing needs it to. The repository is already connected
+# there through Packagist's GitHub integration, which picks up a pushed tag on its own -- verified by
+# resolving `composer require codexpertio/plugin-tracker-sdk:^1.2`, which locks v1.2.0. An API call
+# from here would be a second, weaker copy of a hook that already works, plus two secrets to hold.
 #
 # WHY THERE IS NO BUILD STEP
 #
@@ -109,24 +115,3 @@ jobs:
           fi
 
           gh release create "${TAG}" --title "${TAG}" --generate-notes
-
-      # Packagist does not poll. Without this the tag is published here and still invisible to
-      # Composer, which is the state this repository has been in since it was registered.
-      - name: Tell Packagist there is a new version
-        env:
-          PACKAGIST_USERNAME: ${{ secrets.PACKAGIST_USERNAME }}
-          PACKAGIST_TOKEN: ${{ secrets.PACKAGIST_TOKEN }}
-        run: |
-          # Guarded here rather than in a step `if`. The secrets context is not dependable in step
-          # conditions, and a condition that silently evaluates false would skip this without saying
-          # so -- the same quiet non-event this workflow exists to end.
-          if [ -z "${PACKAGIST_USERNAME}" ] || [ -z "${PACKAGIST_TOKEN}" ]; then
-            echo "::warning::PACKAGIST_USERNAME / PACKAGIST_TOKEN are not set, so Packagist was not notified. The release is published; Composer will not see this version until Packagist crawls the tag."
-            exit 0
-          fi
-
-          curl -sS -XPOST -m 30 \
-            -H 'content-type:application/json' \
-            "https://packagist.org/api/update-package?username=${PACKAGIST_USERNAME}&apiToken=${PACKAGIST_TOKEN}" \
-            -d '{"repository":{"url":"https://github.com/codexpertio/plugin-tracker-sdk"}}'
-          echo
