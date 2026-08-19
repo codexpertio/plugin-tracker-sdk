@@ -1,7 +1,10 @@
 name: Release
 
-# Publishes a GitHub Release for a version tag. The downloadable SDK is that release's own source
-# archive, which GitHub generates -- there is nothing to build and nothing to upload.
+# Publishes a GitHub Release for a version tag, carrying one asset: plugin-tracker-sdk.zip.
+#
+# The asset is `git archive` output, not a build -- same bytes as the source archive GitHub generates
+# for the tag, repackaged under a fixed root folder and a fixed file name so the dashboard can link
+# to /releases/latest/download/plugin-tracker-sdk.zip without resolving anything.
 #
 # WHY THIS EXISTS
 #
@@ -111,17 +114,38 @@ jobs:
 
           echo "Archive carries autoload.php, src/Tracker.php and composer.json"
 
-      # Idempotent on purpose: re-running for an existing tag is a no-op rather than a failure, which
-      # is what makes workflow_dispatch a usable recovery path. GitHub attaches the source archives to
-      # the release itself, so there is no asset to upload or replace.
+      # One asset, with a STABLE name, and that is the whole point of it.
+      #
+      # GitHub's own source archives cannot be fetched from a fixed address: the only stable download
+      # URL it offers is /releases/latest/download/<asset-name>, and that serves uploaded assets only.
+      # Publishing one asset under an unchanging name gives the dashboard a URL it can hard-code --
+      # no API call to resolve a tag, no JSON to parse, no rate limit to think about, and no cache to
+      # invalidate.
+      #
+      # It also fixes the folder name, which the source archive gets wrong for our purposes. GitHub
+      # names its archive's root after the repository AND tag (plugin-tracker-sdk-1.2.0/), while the
+      # integration snippet requires plugin-tracker-sdk/ -- so every author had to rename the folder
+      # after unzipping, a step people miss and one that 1.1.0 had already removed once. `git archive
+      # --prefix` sets it directly, and honours .gitattributes exactly as the source archive does, so
+      # the contents are identical and only the root differs.
+      - name: Package the archive under a stable name
+        run: |
+          git archive --format=zip --prefix=plugin-tracker-sdk/ -o plugin-tracker-sdk.zip HEAD
+
+          echo "Packaged $(unzip -Z1 plugin-tracker-sdk.zip | wc -l) entries under plugin-tracker-sdk/"
+
+      # Idempotent on purpose: re-running for an existing tag replaces the asset rather than failing,
+      # which is what makes workflow_dispatch a usable recovery path when a publish half-succeeded.
       - name: Publish the release
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           if gh release view "${TAG}" >/dev/null 2>&1; then
-            echo "Release ${TAG} already exists; nothing to do."
-            exit 0
+            echo "Release ${TAG} exists; replacing its asset."
+            gh release upload "${TAG}" plugin-tracker-sdk.zip --clobber
+          else
+            gh release create "${TAG}" plugin-tracker-sdk.zip --title "${TAG}" --generate-notes
           fi
 
-          gh release create "${TAG}" --title "${TAG}" --generate-notes
+          echo "Stable download: https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/plugin-tracker-sdk.zip"

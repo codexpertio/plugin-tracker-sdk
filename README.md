@@ -44,14 +44,15 @@ not the endpoint Composer uses. `repo.packagist.org/p2/...` lists `v1.2.0`, and 
 Packagist through its GitHub integration and picks up pushed tags on its own, which is why the
 release workflow does not notify it.
 
-The alternative is the **source archive for a tag**, unzipped beside your main plugin file:
+The alternative is the **release asset**, unzipped beside your main plugin file:
 
 ```
-https://github.com/codexpertio/plugin-tracker-sdk/archive/refs/tags/v1.2.0.zip
+https://github.com/codexpertio/plugin-tracker-sdk/releases/latest/download/plugin-tracker-sdk.zip
 ```
 
-It carries its own `autoload.php`, so it needs no Composer. **Rename the unpacked folder to
-`plugin-tracker-sdk/`** — see [the naming rule](#what-the-download-contains-and-the-one-naming-rule-in-it).
+It carries its own `autoload.php`, so it needs no Composer, and it unpacks to `plugin-tracker-sdk/`
+so the snippet's require path resolves without renaming anything — see
+[what the download contains](#what-the-download-contains).
 
 Neither route protects you from another plugin bundling a different version of this SDK; that is
 what [Distribution and the collision problem](#distribution-and-the-collision-problem) is about, and
@@ -293,27 +294,28 @@ composer makepot            # regenerate languages/plugin-tracker-sdk.pot
 `composer lint` and `composer analyze` are both **clean and can gate**. Unlike
 `plugins/plugin-tracker`, this package has no violation backlog — keep it that way.
 
-### What the download contains, and the one naming rule in it
+### What the download contains
 
 ```
-plugin-tracker-sdk-<version>.zip      what GitHub serves for a tag   e.g. plugin-tracker-sdk-1.2.0.zip
-  plugin-tracker-sdk-<version>/       what it unpacks to
+plugin-tracker-sdk.zip        a release asset, always this name
+  plugin-tracker-sdk/         always this folder
     autoload.php  src/  views/  languages/  composer.json  LICENSE  README.md
 ```
 
-**The folder has to be renamed to `plugin-tracker-sdk/`.** The generated snippet requires
-`__DIR__ . '/plugin-tracker-sdk/autoload.php'`, so an author who unzips beside their plugin file and
-pastes the snippet lands on a path that does not exist, and their site fatals on activation.
+Fetch the newest one from a fixed address — no tag in it, no API call to resolve one:
 
-This is a step people miss, and it is worth being blunt that it is a **regression**: 1.1.0 removed
-exactly this rename by having the build unpack straight to `plugin-tracker-sdk/`. Dropping the build
-took that control away — GitHub names the archive after the repository and tag, and nothing in this
-repository can change it. The choice was a rename step against maintaining a build script whose only
-remaining job was the folder name, and the integration guide states the rename at the point the
-reader needs it.
+```
+https://github.com/codexpertio/plugin-tracker-sdk/releases/latest/download/plugin-tracker-sdk.zip
+```
 
-The alternative, if the rename proves too costly in support: reinstate a minimal release asset whose
-only difference from the source archive is the directory name.
+Unzip it beside your main plugin file and the snippet's
+`require __DIR__ . '/plugin-tracker-sdk/autoload.php'` resolves as written. **No renaming.**
+
+The asset exists for exactly those two reasons. GitHub's own source archive for a tag carries
+identical bytes — `git archive` produces both, and `.gitattributes` trims both the same way — but its
+root folder is named for the repository and tag (`plugin-tracker-sdk-1.2.0/`), and it cannot be
+fetched from a stable URL, because `/releases/latest/download/` serves uploaded assets only. The
+release workflow repackages the same tree with `--prefix=plugin-tracker-sdk/` to fix both.
 
 ## Distribution and the collision problem
 
