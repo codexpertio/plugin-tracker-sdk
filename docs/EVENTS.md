@@ -33,7 +33,7 @@ Every request carries this envelope. `schema` is what lets ingestion stay backwa
 | Field     | Type   | Keep/drop | Why                                                                                                                                             |
 |-----------|--------|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------|
 | `schema`  | int    | **keep**  | Payload contract version. Currently `2`. Ingestion dispatches on this. **`1` must keep being accepted** — see below. |
-| `sdk`     | string | **keep**  | SDK semver, e.g. `1.0.0`. Records which version a site reports with, so "this version is dead" becomes evidence rather than assumption (§10.2). |
+| `sdk`     | string | **keep**  | SDK semver, e.g. `1.2.0`. Records which version a site reports with, so "this version is dead" becomes evidence rather than assumption (§10.2). |
 | `hash`    | string | **keep**  | Dashboard-issued, public, non-secret plugin identifier from the pasted snippet (`Config::HASH_PATTERN`, `/^[a-f0-9]{32,64}\z/`). Says which plugin is reporting. Useless on its own. |
 | `install` | string | **keep**  | Anonymous install ID — see below.                                                                                                               |
 | `sent_at` | int    | **keep**  | Unix UTC timestamp of transmission.                                                                                                             |

@@ -143,7 +143,7 @@ wrapper — feedback is a single object, not a batch, because there is nothing t
 ```json
 {
   "schema":         2,
-  "sdk":            "1.0.0",
+  "sdk":            "1.2.0",
   "project":        "pt_proj_1a2b3c",
   "hash":           "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
   "at":             1769472000,

@@ -55,8 +55,8 @@ Unauthenticated — this is the call that obtains the credential. It must theref
 
 ```json
 {
-  "schema":  1,
-  "sdk":     "1.0.0",
+  "schema":  2,
+  "sdk":     "1.2.0",
   "hash":    "a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4",
   "install": "ins_9f8e7d6c5b4a39281706f5e4d3c2b1a0",
   "plugin":  "my-plugin",
@@ -106,7 +106,8 @@ Success — `200`:
 ```
 
 `notice` is the deprecation channel §10.2 requires. It is the **only** way to reach a site running a two-year-old
-bundled copy, since there is no `composer update`. When present the SDK surfaces it to the plugin owner in wp-admin and
+bundled copy. A Composer consumer can `composer update`; the ones this channel exists for cannot, because they unzipped
+a build from the dashboard and froze it. When present the SDK surfaces it to the plugin owner in wp-admin and
 stops re-showing it after `until`.
 
 Partial acceptance is expected and normal: ingestion applies the event allow-list per event, so
