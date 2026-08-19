@@ -4,14 +4,14 @@
 # Composer downloads for `--prefer-dist` -- the default. So everything listed here is absent from a
 # normal `composer require`, and present for anyone who clones or forks.
 #
-# It does NOT affect `git clone`, and it does not affect the namespace-scoped build from
-# bin/build-dist.sh, which assembles its output explicitly.
+# It does NOT affect `git clone`. It is now the ONLY thing deciding what a consumer receives:
+# the downloadable SDK is a tag's source archive, so this file is the packaging.
 #
 # ## What must never be listed here
 #
 # src/, views/ and languages/ are all RUNTIME. views/ holds the consent prompt and the deactivation
 # modal, which the SDK renders from disk; languages/ holds the .pot the text domain loads, and
-# build-dist.sh refuses to build without it. Excluding any of the three produces a package that
+# and a copy without it renders untranslated. Excluding any of the three produces a package that
 # installs cleanly and then fails at the moment a site owner is asked for consent -- the worst place
 # for this to go wrong, because it is the one path that cannot be skipped.
 #

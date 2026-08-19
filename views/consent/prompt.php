@@ -7,7 +7,7 @@
  * views/feedback/ is to Feedback\.
  *
  * See views/feedback/modal.php for the two rules every view here inherits: it must stay `.php` and
- * its directory must be listed in bin/build-dist.sh's SOURCE_ROOTS, or it will not ship and the
+ * its directory must not be export-ignored in .gitattributes, or it will not ship and the
  * include will fatal on a consumer's admin screen with no build error to warn anyone.
  *
  * Not overridable, and for a narrower reason than the feedback modal. This is the consent prompt:

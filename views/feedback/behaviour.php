@@ -7,7 +7,7 @@
  * `.php`, what the build has to do for them to ship, and why none of this is overridable.
  *
  * The script stays INLINE rather than being enqueued from a .js file, and that is a distribution
- * fact rather than a preference: bin/build-dist.sh copies `-name '*.php'` from its named source
+ * fact rather than a preference: the release archive carries whatever .gitattributes does not
  * roots, plus a generated autoload.php, composer.json, languages/ and LICENSE. A `.js` file is not
  * copied by anything, and an enqueued handle pointing at a file that was never shipped is a 404 on
  * every plugins.php load. Inline is the only form that survives the build; putting it in a `.php`

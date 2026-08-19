@@ -24,25 +24,36 @@ are the only record of why a decision was taken.
 
 ## Installing it
 
-Two routes, and **they do not end at the same class name** — which is the one thing worth reading
-this section for. Identical code, different namespace, and pasting the wrong snippet is a fatal on
-activation rather than something that degrades.
+Two routes, and since the namespace rewrite was dropped **they end at the same class name**. That is
+new: a scoped download used to resolve `CxTrackerSdk_v<version>_<digest>\Tracker` while Composer
+resolved `Codexpert\PluginTracker\Tracker`, and pasting the wrong snippet was a fatal on activation.
+Identical code, identical namespace, either way now.
 
 ```bash
-composer require codexpertio/plugin-tracker-sdk:^1.2
+composer require codexpertio/plugin-tracker-sdk
 ```
 
-Composer resolves `Codexpert\PluginTracker\` — the namespace this repository declares, unrewritten —
-and loads it through `vendor/autoload.php` like any other dependency.
+Unconstrained deliberately, and it does not resolve yet. Packagist has this package registered but
+has never crawled it — it reports `crawledAt: null` and lists only `dev-master` and a few `dev-*`
+branches, so the `v1.2.0` tag was never ingested and `:^1.2` matched nothing. The release workflow
+notifies Packagist on every tag now; pin the constraint again once a tagged release is actually
+listed there.
 
-The alternative is a **built copy downloaded from the dashboard**, unzipped beside your main plugin
-file. That copy is namespace-scoped per version (`CxTrackerSdk_v<version>_<digest>\Tracker`) and carries
-its own `autoload.php`, so it needs no Composer and cannot collide with another plugin's bundled
-copy. [Distribution and the collision problem](#distribution-and-the-collision-problem) is why that
-exists and what it costs you to skip it.
+The alternative is the **source archive for a tag**, unzipped beside your main plugin file:
 
-The dashboard's snippet generator has a switch for which route you took, and generates the matching
-snippet. Do not hand-edit one into the other.
+```
+https://github.com/codexpertio/plugin-tracker-sdk/archive/refs/tags/v1.2.0.zip
+```
+
+It carries its own `autoload.php`, so it needs no Composer. **Rename the unpacked folder to
+`plugin-tracker-sdk/`** — see [the naming rule](#what-the-download-contains-and-the-one-naming-rule-in-it).
+
+Neither route protects you from another plugin bundling a different version of this SDK; that is
+what [Distribution and the collision problem](#distribution-and-the-collision-problem) is about, and
+it is now the same trade whichever route you take.
+
+The dashboard's snippet generator has a switch for which route you took. The two snippets differ only
+in how they reach `autoload.php`, not in what they call.
 
 ## Quick start
 
@@ -52,10 +63,10 @@ integration -- no hooks to register, no `track()` calls for lifecycle events, no
 Full detail, and why every part of it is shaped the way it is: [`docs/SNIPPET.md`](docs/SNIPPET.md).
 
 Shown here for the **downloaded** copy. Note what it does *not* contain: a version, or a class name.
-The scoped namespace carries the version (`CxTrackerSdk_v<version>_<digest>`), so writing it into the
-author's file would make every upgrade a two-step operation that fails silently if you do only the
-first — new folder, stale snippet, `Class … not found` on their users' sites. `autoload.php` returns
-the class name instead, so replacing the folder is the entire upgrade.
+That mattered more when the namespace carried the version and a stale snippet meant `Class … not
+found` on an author's users' sites after an upgrade. The namespace is fixed now, so hard-coding the
+class name would work — `autoload.php` still returns it, and the snippet still uses what it returns,
+because an author who never names a class cannot name a stale one whatever we change later.
 
 ```php
 if ( ! function_exists( 'my_plugin_tracker' ) ) {
@@ -224,16 +235,16 @@ views/                        # every subdirectory mirrors the namespace segment
     ├── modal.php             # the dialog's scoped stylesheet and markup
     └── behaviour.php         # the inline script that intercepts the Deactivate link
 
-languages/plugin-tracker-sdk.pot  # sibling of src/, shipped by bin/build-dist.sh
+languages/plugin-tracker-sdk.pot  # sibling of src/, kept in the release archive
 ```
 
 `views/` sits outside `src/` because `src/` is the PSR-4 class tree and these files declare no
 class. **`src/` emits no markup at all** — a rule worth stating as a rule, because "no *substantial*
 markup" is an argument every time and this is checkable (`grep -rl '?>' src/` returns nothing). They
 are included through `__DIR__ . '/../../views/<segment>/'`,
-which only resolves in a built artifact because `bin/build-dist.sh` lists `views/` in its
-`SOURCE_ROOTS` and copies it at the same depth relative to `src/`. Adding a directory of templates
-anywhere without adding it there produces an artifact that loads, passes every other check, and
+which only resolves in a distributed copy because `.gitattributes` does **not** `export-ignore`
+`views/`, so the archive keeps it at the same depth relative to `src/`. Adding a directory of
+templates and then export-ignoring it produces an archive that loads, passes every other check, and
 then fatals on a consumer's `plugins.php` — so the build has a dedicated verification step (VERIFY
 #4) that resolves every `__DIR__`-relative include against the artifact and fails if one is
 missing.
@@ -272,106 +283,71 @@ composer lint               # phpcs, WPCS + PHPCompatibility 7.2-
 composer lint:fix           # phpcbf
 composer analyze            # PHPStan level 5
 composer makepot            # regenerate languages/plugin-tracker-sdk.pot
-composer dist               # build a scoped, distributable copy AND package it as a zip
-composer verify-collision   # bin/verify-collision.sh -- the two-consumer collision test (see below)
 ```
 
 `composer lint` and `composer analyze` are both **clean and can gate**. Unlike
 `plugins/plugin-tracker`, this package has no violation backlog — keep it that way.
 
-### What `composer dist` produces, and the one naming rule in it
+### What the download contains, and the one naming rule in it
 
 ```
-dist/CxTrackerSdk_v<version>_<digest>/      the scoped tree      e.g. CxTrackerSdk_v1_2_0_9f7703/
-dist/CxTrackerSdk_v<version>_<digest>.zip   what an author downloads
+plugin-tracker-sdk-<version>.zip      what GitHub serves for a tag   e.g. plugin-tracker-sdk-1.2.0.zip
+  plugin-tracker-sdk-<version>/       what it unpacks to
+    autoload.php  src/  views/  languages/  composer.json  LICENSE  README.md
 ```
 
-The **file** is named for the scoped namespace, which is how anyone looking at the backend's uploads
-directory can tell which version is being served. The backend does not care — it globs `*.zip` and
-takes the newest by mtime.
+**The folder has to be renamed to `plugin-tracker-sdk/`.** The generated snippet requires
+`__DIR__ . '/plugin-tracker-sdk/autoload.php'`, so an author who unzips beside their plugin file and
+pastes the snippet lands on a path that does not exist, and their site fatals on activation.
 
-The **archive unpacks to `plugin-tracker-sdk/`**, not to that name, and that is the rule worth
-knowing. The generated snippet requires `__DIR__ . '/plugin-tracker-sdk/autoload.php'`, so an author
-who unzips beside their plugin file and pastes the snippet has to land on that path or the require
-resolves to nothing and their site fatals on activation. Before 1.1.0 the zip unpacked to the scoped
-name and the integration guide asked the reader to rename it, which is a step people miss.
+This is a step people miss, and it is worth being blunt that it is a **regression**: 1.1.0 removed
+exactly this rename by having the build unpack straight to `plugin-tracker-sdk/`. Dropping the build
+took that control away — GitHub names the archive after the repository and tag, and nothing in this
+repository can change it. The choice was a rename step against maintaining a build script whose only
+remaining job was the folder name, and the integration guide states the rename at the point the
+reader needs it.
 
-Nothing is lost by the rename: the folder name was never what keeps two bundled copies apart — the
-scoped namespace is — and each copy lives inside its own consumer plugin's directory.
-
-The build reads the expected folder from [`docs/SNIPPET.md`](docs/SNIPPET.md) rather than hardcoding
-it, then unzips its own output to confirm the file is there. That check proves the packaging did what
-it was told; it cannot prove the layout is right, because the expectation comes from the file that
-drove the build. The disagreement that would actually hurt — this artifact against the snippet the
-**backend** generates — is checked in the monorepo's CI, which is the only place both trees exist.
-
-That check is currently **not running**: the monorepo's CI workflow has been disabled since
-2026-07-30, so nothing gates a merge there today. The check exists and passes when run; it is simply
-not a guarantee you can rely on right now, and a snippet/artifact disagreement would reach a
-consumer as an activation fatal.
-
-Uploading the zip is a manual step: `dist/` is gitignored and the artifact is served from the
-backend's uploads directory rather than shipped in the plugin.
-
-Tests follow the house layout (`tests/php/{bootstrap.php,src/,utils/}`, PSR-4
-`Codexpert\PluginTracker\Test\`), but boot through `brain/monkey` rather than the WordPress test
-suite. That is deliberate: this is a library bundled into other people's plugins, and requiring a
-full WP install to run its unit tests would be a barrier for exactly the people who need to run
-them.
-
-### PHP 7.2 is a distribution decision, not a preference
-
-This floor becomes the floor for **every plugin that bundles this SDK**, so it caps adoption. No
-typed properties, no arrow functions, no `??=`.
-
-Two tools hold it between them, and it is worth knowing which does what. `phpcs` with
-`PHPCompatibility testVersion 7.2-` catches typed properties, `??=`, trailing commas in calls and
-array unpacking — but **not** arrow functions, `match`, `?->` or the PHP 8 string functions, because
-the locked PHPCompatibility 9.3.5 predates them. Those are caught by `composer analyze`: PHPStan
-with `phpVersion: 70200` treats them as syntax errors. `config.platform.php` pins the resolver so
-dev dependencies cannot drag the floor up.
-
-So run both. Passing `composer lint` alone does not mean the floor is intact.
+The alternative, if the rename proves too costly in support: reinstate a minimal release asset whose
+only difference from the source archive is the directory name.
 
 ## Distribution and the collision problem
 
-This section said "Not on Packagist" until 2026-08-19, and that had stopped being true: the package
-was registered there on 2026-08-17. The sentence is called out rather than quietly deleted because
-it was load-bearing — it is why the dashboard's integration guide carried no install command at all
-for a while, and [`bin/build-dist.sh`](bin/build-dist.sh) still opens by repeating it.
+The download is a **tag's own source archive**, produced by GitHub for every release. There is no
+build step and no uploaded asset: `.gitattributes` trims the archive to the runtime files, and
+`git archive` is what backs both a GitHub source zip and a Composer `--prefer-dist` install — so
+both routes now ship identical bytes, which they did not before.
 
-What has **not** changed is the reason the scoped build exists, and Packagist does not help with it.
-Most consumers download a built copy from the dashboard and bundle it, so **there is no `composer
-update`** for them — every one of those consumers freezes the version they downloaded, permanently,
-on sites we cannot reach.
+`autoload.php` is committed for that reason. It used to be generated during the build, and an
+archive without it is one no consumer can integrate: the dashboard's snippet requires that file and
+calls the class name it returns. The release workflow asserts it is present rather than leaving it
+to be discovered by whoever unzips first.
 
-That has a sharp consequence. If three plugins on one site each bundle a different version, PHP
-loads whichever `vendor/autoload.php` registers first, so a plugin tested against 2.0 silently runs
-against 1.0 and fatals on a missing method. Plain Composer cannot prevent this — and a consumer who
-installs through Composer gets the unscoped namespace, so they are inside that failure mode rather
-than protected from it. That is the trade the [install section](#installing-it) points at: Composer
-is the convenient route, and the scoped download is the safe one for a plugin shipped to sites you
-do not control.
+### What was given up
 
-`composer dist` therefore emits a **namespace-scoped** copy: `Codexpert\PluginTracker\` is rewritten
-to a per-version prefix (e.g. `CxTrackerSdk_v1_2_0_9f7703` -- the trailing hex is a short digest of
-the raw version string, appended because collapsing non-word characters alone is lossy: `1.0.0-hotfix`
-and `1.0.0+hotfix` would otherwise collapse to the same prefix and reintroduce the exact version skew
-this scoping exists to prevent), making each consumer's copy self-contained and requiring nothing of
-them.
+This package used to publish a **namespace-scoped** copy: `Codexpert\PluginTracker\` rewritten to a
+per-version prefix such as `CxTrackerSdk_v1_2_0_9f7703`, so that each consumer's bundled copy was
+self-contained. That was dropped, and the problem it solved did not go away.
 
-`composer verify-collision` runs the test this design exists to pass: it builds two scoped copies at
-different versions, loads both in one PHP process the way two plugins on one site would, and asserts
-they coexist with fully isolated state -- see [`bin/verify-collision.sh`](bin/verify-collision.sh).
+Most consumers bundle a downloaded copy, so **there is no `composer update`** for them — each one
+freezes the version it downloaded, permanently, on sites we cannot reach. If three plugins on one
+site each bundle a different version, every copy now declares the same classes under the same
+namespace, and PHP loads whichever autoloader registers first. A plugin tested against 2.0 can
+therefore run against 1.0 and fatal on a missing method.
 
-`automattic/jetpack-autoloader` was considered and rejected. It only works if *every* consumer
-adopts it, which is enforceable for plugins we control and not for third parties who downloaded a
-zip — and a shared runtime that cannot be guaranteed is worse than none, because the failure is
-silent version skew rather than a clean duplicate.
+That exposure is no longer a difference between the two routes: a Composer install always had the
+unscoped namespace, and the download now matches it. [`autoload.php`](autoload.php) states the
+consequence at the point somebody reads it, and its guard constant is deliberately unversioned so
+the second copy registers nothing rather than racing the first — making the outcome consistent
+instead of dependent on load order.
 
-The cost is real: N consumers on one site means N queues and N requests, since batching across them
-is no longer possible. Mitigated by small payloads, a long jittered interval, and never flushing on
-a page request.
+`automattic/jetpack-autoloader` was considered and rejected before, and the reasoning still holds:
+it only works if *every* consumer adopts it, which is enforceable for plugins we control and not for
+third parties who downloaded a zip — and a shared runtime that cannot be guaranteed is worse than
+none, because the failure is silent version skew rather than a clean duplicate.
+
+The per-consumer cost is unchanged: N consumers on one site means N queues and N requests, since
+batching across them is not possible. Mitigated by small payloads, a long jittered interval, and
+never flushing on a page request.
 
 ## Status
 

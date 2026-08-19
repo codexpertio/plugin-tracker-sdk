@@ -144,8 +144,8 @@ class Notice {
 		$plugin       = $this->config->plugin();
 		$nonce_action = 'cx_tracker_consent_' . $plugin;
 
-		// See Feedback\Deactivation::render() for why this is __DIR__-relative and why views/ has to
-		// be in bin/build-dist.sh's SOURCE_ROOTS for the path to exist in a shipped artifact.
+		// See Feedback\Deactivation::render() for why this is __DIR__-relative and why views/ must
+		// stay out of .gitattributes' export-ignore list for the path to exist in a shipped copy.
 		include __DIR__ . '/../../views/consent/prompt.php';
 	}
 

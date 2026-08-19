@@ -3,9 +3,12 @@
  * Assert the SDK adds nothing to a consumer's dependency tree.
  *
  * This SDK is bundled inside third-party WordPress plugins. A runtime dependency here becomes
- * theirs -- and, because the shipped copy is namespace-scoped and frozen, becomes a version they can
- * never reconcile against their own. So `require` must contain nothing but the PHP constraint and
- * ext-* extension checks, forever.
+ * theirs -- and, because the shipped copy is frozen at whatever version they downloaded, becomes a
+ * version they can never reconcile against their own. So `require` must contain nothing but the PHP
+ * constraint and ext-* extension checks, forever.
+ *
+ * The distributed copy is now a plain source archive with no vendor/ directory of its own, so a
+ * runtime dependency would not merely be awkward -- it would be absent at load.
  *
  * It also covers what `config.platform.php` used to cover by accident. That pin was 7.2.5, matching
  * the distribution floor, which meant composer refused any dependency needing more than 7.2 --

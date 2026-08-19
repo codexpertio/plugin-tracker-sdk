@@ -16,7 +16,7 @@ namespace Codexpert\PluginTracker;
  * exactly what a bundled library needs.
  *
  * The path is derived from this file's own location, so it keeps working in a scoped copy built by
- * bin/build-dist.sh (which ships languages/ alongside src/) no matter where a consumer bundles it.
+ * .gitattributes (which keeps languages/ alongside src/) no matter where a consumer bundles it.
  *
  * Consumers can still override any individual string through the `cx_tracker_notice_strings`
  * filter -- useful when a consumer wants the prompt to match their own product's wording rather

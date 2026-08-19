@@ -54,9 +54,7 @@
         "lint:fix": "phpcbf -p",
         "analyze": "phpstan analyse --memory-limit=1G",
         "check-floor": "php bin/check-floor.php",
-        "dist": "bash bin/build-dist.sh",
-        "makepot": "wp i18n make-pot . languages/plugin-tracker-sdk.pot --slug=plugin-tracker-sdk --domain=plugin-tracker-sdk --package-name=\"Plugin Tracker SDK\" --exclude=tests,vendor,dist,bin,docs --ignore-domain",
-        "verify-collision": "bash bin/verify-collision.sh"
+        "makepot": "wp i18n make-pot . languages/plugin-tracker-sdk.pot --slug=plugin-tracker-sdk --domain=plugin-tracker-sdk --package-name=\"Plugin Tracker SDK\" --exclude=tests,vendor,dist,bin,docs --ignore-domain"
     },
     "config": {
         "_platform_note": [

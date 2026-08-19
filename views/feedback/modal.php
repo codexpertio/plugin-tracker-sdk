@@ -8,7 +8,7 @@
  *
  * It lives at the package root rather than inside src/, because src/ is the PSR-4 class tree and a
  * file that declares no class has no business being autoload-adjacent. That placement carries a
- * distribution obligation, and it is not optional: bin/build-dist.sh assembles the scoped artifact
+ * distribution obligation, and it is not optional: .gitattributes decides what leaves this repository
  * by copying named source roots, and this directory is one of them **because it was added to that
  * list**. Nothing about a views/ folder makes a build tool notice it. Remove it from
  * SOURCE_ROOTS there and this file stops shipping -- with no build error, and a fatal on the
