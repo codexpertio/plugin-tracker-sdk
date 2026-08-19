@@ -2,17 +2,18 @@
 
 # Plugin Tracker SDK
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](src/Tracker.php)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](src/Tracker.php)
 [![PHP](https://img.shields.io/badge/PHP-7.2%2B-777bb4.svg)](composer.json)
-[![License](https://img.shields.io/badge/license-GPL%20v3%20or%20later-green.svg)](../../../plugins/plugin-tracker/license.txt)
+[![License](https://img.shields.io/badge/license-GPL%20v3%20or%20later-green.svg)](LICENSE)
 
 Opt-in telemetry for WordPress plugins. Consent-gated by default, anonymous by construction.
 
 </div>
 
-`codexpertio/plugin-tracker-sdk` — namespace `Codexpert\PluginTracker\`. Part of the
-[Plugin Tracker monorepo](../../../README.md); tracked in issue
-[#40](https://github.com/codexpertio/plugin-tracker/issues/40).
+`codexpertio/plugin-tracker-sdk` — namespace `Codexpert\PluginTracker\`. Developed inside the Plugin
+Tracker monorepo, which is private, and mirrored to this repository; issue references such as #40
+below point into that private tracker and will 404 for anyone outside it. Kept anyway, because they
+are the only record of why a decision was taken.
 
 > [!IMPORTANT]
 > **This SDK is the only part of this project exposed to WordPress.org review.** `plugin-tracker`
@@ -21,6 +22,28 @@ Opt-in telemetry for WordPress plugins. Consent-gated by default, anonymous by c
 > rules, and this SDK is the mechanism by which it would fail them. Every consumer inherits that
 > exposure, so the compliant path is the default one and the gates are fail-closed.
 
+## Installing it
+
+Two routes, and **they do not end at the same class name** — which is the one thing worth reading
+this section for. Identical code, different namespace, and pasting the wrong snippet is a fatal on
+activation rather than something that degrades.
+
+```bash
+composer require codexpertio/plugin-tracker-sdk:^1.2
+```
+
+Composer resolves `Codexpert\PluginTracker\` — the namespace this repository declares, unrewritten —
+and loads it through `vendor/autoload.php` like any other dependency.
+
+The alternative is a **built copy downloaded from the dashboard**, unzipped beside your main plugin
+file. That copy is namespace-scoped per version (`CxTrackerSdk_v1_2_0_9f7703\Tracker`) and carries
+its own `autoload.php`, so it needs no Composer and cannot collide with another plugin's bundled
+copy. [Distribution and the collision problem](#distribution-and-the-collision-problem) is why that
+exists and what it costs you to skip it.
+
+The dashboard's snippet generator has a switch for which route you took, and generates the matching
+snippet. Do not hand-edit one into the other.
+
 ## Quick start
 
 There is no hand-written bootstrap. The dashboard generates a code snippet and the plugin author pastes
@@ -28,19 +51,22 @@ it into their **main plugin file**, above their own plugin's bootstrap. That sni
 integration -- no hooks to register, no `track()` calls for lifecycle events, no settings screen to build.
 Full detail, and why every part of it is shaped the way it is: [`docs/SNIPPET.md`](docs/SNIPPET.md).
 
+Shown here for the **downloaded** copy, which is the scoped one. On Composer, the `require_once` line
+goes away and every `\CxTrackerSdk_v1_2_0_9f7703\` below reads `\Codexpert\PluginTracker\`.
+
 ```php
 if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
 	require_once __DIR__ . '/plugin-tracker-sdk/autoload.php';
 
 	/**
-	 * @return \CxTrackerSdk_v1_0_0_92521f\Tracker|null
+	 * @return \CxTrackerSdk_v1_2_0_9f7703\Tracker|null
 	 */
 	function my_plugin_tracker() {
 		global $my_plugin_tracker;
 
 		if ( ! isset( $my_plugin_tracker ) ) {
-			$my_plugin_tracker = \CxTrackerSdk_v1_0_0_92521f\Tracker::init(
+			$my_plugin_tracker = \CxTrackerSdk_v1_2_0_9f7703\Tracker::init(
 				array(
 					'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87', // dashboard-issued, public
 					'file'    => __FILE__, // the MAIN plugin file, see docs/SNIPPET.md
@@ -75,7 +101,7 @@ The only thing left to call yourself is a named feature, because only you know w
 $tracker = my_plugin_tracker();
 
 if ( $tracker ) {
-	$tracker->track( \CxTrackerSdk_v1_0_0_92521f\Event::FEATURE, array( 'name' => 'csv_export' ) );
+	$tracker->track( \CxTrackerSdk_v1_2_0_9f7703\Event::FEATURE, array( 'name' => 'csv_export' ) );
 }
 ```
 
@@ -118,7 +144,14 @@ separate consent basis. See [`docs/FEEDBACK.md`](docs/FEEDBACK.md).
 
 Six events — `install`, `activate`, `version`, `compat`, `feature`, `deactivation` — each carrying
 an anonymous install ID, your plugin's version, the WordPress and PHP versions, the site locale,
-and whether the site is multisite.
+whether the site is multisite, and — **added in 1.2.0, which is why `schema` went to 2** — the web
+server's name and the active theme's slug.
+
+Both of those last two are bounded readings rather than raw environment, and the boundary is the
+point. `Environment::server()` matches `SERVER_SOFTWARE` against a closed list and returns a literal
+from it, so `Apache/2.4.41 (Ubuntu)` transmits as `apache` and the version and distribution never
+leave the site. `theme` is the stylesheet **slug** only; its version and parent go with deactivation
+feedback, where a bug report wants the whole picture.
 
 **Five of the six are automatic.** [`Lifecycle`](src/Lifecycle.php) fires `install` and `activate` from
 the `register_activation_hook()` it registers itself, `deactivation` from the `register_deactivation_hook()`
@@ -133,7 +166,7 @@ exists to protect.
 
 The scoping matters and is not pedantry. The **deactivation-feedback** payload is a different
 payload on a different route with its own consent basis, and it *does* carry the site address, the
-active theme and the active-plugin list — because it is identified by design, the administrator
+theme's version and parent, and the active-plugin list — because it is identified by design, the administrator
 reads an itemised list of exactly those values in the dialog, and they press the button anyway. It
 still never carries an email, a username, or the anonymous install ID; that last omission is the
 join-key rule, and it is what stops the two streams from being correlatable. See
@@ -233,8 +266,8 @@ composer verify-collision   # bin/verify-collision.sh -- the two-consumer collis
 ### What `composer dist` produces, and the one naming rule in it
 
 ```
-dist/CxTrackerSdk_v1_1_0_7fbd21/      the scoped tree
-dist/CxTrackerSdk_v1_1_0_7fbd21.zip   what a plugin author downloads
+dist/CxTrackerSdk_v1_2_0_9f7703/      the scoped tree
+dist/CxTrackerSdk_v1_2_0_9f7703.zip   what a plugin author downloads
 ```
 
 The **file** is named for the scoped namespace, which is how anyone looking at the backend's uploads
@@ -255,6 +288,11 @@ it, then unzips its own output to confirm the file is there. That check proves t
 it was told; it cannot prove the layout is right, because the expectation comes from the file that
 drove the build. The disagreement that would actually hurt — this artifact against the snippet the
 **backend** generates — is checked in the monorepo's CI, which is the only place both trees exist.
+
+That check is currently **not running**: the monorepo's CI workflow has been disabled since
+2026-07-30, so nothing gates a merge there today. The check exists and passes when run; it is simply
+not a guarantee you can rely on right now, and a snippet/artifact disagreement would reach a
+consumer as an activation fatal.
 
 Uploading the zip is a manual step: `dist/` is gitignored and the artifact is served from the
 backend's uploads directory rather than shipped in the plugin.
@@ -281,16 +319,26 @@ So run both. Passing `composer lint` alone does not mean the floor is intact.
 
 ## Distribution and the collision problem
 
-Not on Packagist. Registered plugin owners download a built copy from the dashboard and bundle it,
-so **there is no `composer update`** — every consumer freezes the version they downloaded,
-permanently, on sites we cannot reach.
+This section said "Not on Packagist" until 2026-08-19, and that had stopped being true: the package
+was registered there on 2026-08-17. The sentence is called out rather than quietly deleted because
+it was load-bearing — it is why the dashboard's integration guide carried no install command at all
+for a while, and [`bin/build-dist.sh`](bin/build-dist.sh) still opens by repeating it.
+
+What has **not** changed is the reason the scoped build exists, and Packagist does not help with it.
+Most consumers download a built copy from the dashboard and bundle it, so **there is no `composer
+update`** for them — every one of those consumers freezes the version they downloaded, permanently,
+on sites we cannot reach.
 
 That has a sharp consequence. If three plugins on one site each bundle a different version, PHP
 loads whichever `vendor/autoload.php` registers first, so a plugin tested against 2.0 silently runs
-against 1.0 and fatals on a missing method. Plain Composer cannot prevent this.
+against 1.0 and fatals on a missing method. Plain Composer cannot prevent this — and a consumer who
+installs through Composer gets the unscoped namespace, so they are inside that failure mode rather
+than protected from it. That is the trade the [install section](#installing-it) points at: Composer
+is the convenient route, and the scoped download is the safe one for a plugin shipped to sites you
+do not control.
 
 `composer dist` therefore emits a **namespace-scoped** copy: `Codexpert\PluginTracker\` is rewritten
-to a per-version prefix (e.g. `CxTrackerSdk_v1_0_0_92521f` -- the trailing hex is a short digest of
+to a per-version prefix (e.g. `CxTrackerSdk_v1_2_0_9f7703` -- the trailing hex is a short digest of
 the raw version string, appended because collapsing non-word characters alone is lossy: `1.0.0-hotfix`
 and `1.0.0+hotfix` would otherwise collapse to the same prefix and reintroduce the exact version skew
 this scoping exists to prevent), making each consumer's copy self-contained and requiring nothing of
@@ -332,4 +380,4 @@ The rest of the pipeline is built too: the dashboard reports with per-project ex
 
 ## License
 
-[GPL-3.0-or-later](../../../plugins/plugin-tracker/license.txt)
+[GPL-3.0-or-later](LICENSE)
