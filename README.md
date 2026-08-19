@@ -36,7 +36,7 @@ Composer resolves `Codexpert\PluginTracker\` — the namespace this repository d
 and loads it through `vendor/autoload.php` like any other dependency.
 
 The alternative is a **built copy downloaded from the dashboard**, unzipped beside your main plugin
-file. That copy is namespace-scoped per version (`CxTrackerSdk_v1_2_0_9f7703\Tracker`) and carries
+file. That copy is namespace-scoped per version (`CxTrackerSdk_v<version>_<digest>\Tracker`) and carries
 its own `autoload.php`, so it needs no Composer and cannot collide with another plugin's bundled
 copy. [Distribution and the collision problem](#distribution-and-the-collision-problem) is why that
 exists and what it costs you to skip it.
@@ -51,31 +51,42 @@ it into their **main plugin file**, above their own plugin's bootstrap. That sni
 integration -- no hooks to register, no `track()` calls for lifecycle events, no settings screen to build.
 Full detail, and why every part of it is shaped the way it is: [`docs/SNIPPET.md`](docs/SNIPPET.md).
 
-Shown here for the **downloaded** copy, which is the scoped one. On Composer, the `require_once` line
-goes away and every `\CxTrackerSdk_v1_2_0_9f7703\` below reads `\Codexpert\PluginTracker\`.
+Shown here for the **downloaded** copy. Note what it does *not* contain: a version, or a class name.
+The scoped namespace carries the version (`CxTrackerSdk_v<version>_<digest>`), so writing it into the
+author's file would make every upgrade a two-step operation that fails silently if you do only the
+first — new folder, stale snippet, `Class … not found` on their users' sites. `autoload.php` returns
+the class name instead, so replacing the folder is the entire upgrade.
 
 ```php
 if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
-	require_once __DIR__ . '/plugin-tracker-sdk/autoload.php';
-
 	/**
-	 * @return \CxTrackerSdk_v1_2_0_9f7703\Tracker|null
+	 * @return object|null The SDK's Tracker, or null when the SDK is not present.
 	 */
 	function my_plugin_tracker() {
 		global $my_plugin_tracker;
 
 		if ( ! isset( $my_plugin_tracker ) ) {
-			$my_plugin_tracker = \CxTrackerSdk_v1_2_0_9f7703\Tracker::init(
-				array(
-					'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87', // dashboard-issued, public
-					'file'    => __FILE__, // the MAIN plugin file, see docs/SNIPPET.md
-					'enabled' => true,     // consent gate 1: you, the author, enable it
-				)
-			);
+			$my_plugin_tracker = false;
+
+			// Ask the SDK for its own class name rather than naming it here.
+			$tracker_autoload = __DIR__ . '/plugin-tracker-sdk/autoload.php';
+			$tracker_class    = is_file( $tracker_autoload ) ? require $tracker_autoload : '';
+
+			// Every way the SDK can be missing or broken ends up here as a no-op instead of a
+			// fatal. A telemetry SDK must never be the reason a site goes down.
+			if ( is_string( $tracker_class ) && class_exists( $tracker_class ) ) {
+				$my_plugin_tracker = $tracker_class::init(
+					array(
+						'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87', // dashboard-issued, public
+						'file'    => __FILE__, // the MAIN plugin file, see docs/SNIPPET.md
+						'enabled' => true,     // consent gate 1: you, the author, enable it
+					)
+				);
+			}
 		}
 
-		return $my_plugin_tracker;
+		return $my_plugin_tracker ? $my_plugin_tracker : null;
 	}
 
 	my_plugin_tracker();
@@ -83,6 +94,10 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
 // ... your own plugin's bootstrap follows.
 ```
+
+On **Composer** the shape differs in two places: `vendor/autoload.php` is required above the guard,
+and `$tracker_class` is assigned the SDK's own unscoped `Codexpert\PluginTracker\Tracker` outright,
+since nothing rewrites it on that path. [`docs/SNIPPET.md`](docs/SNIPPET.md) has both in full.
 
 The moment `init()` succeeds, the SDK registers its own `register_activation_hook()`,
 `register_deactivation_hook()` and `init` listeners, and raises `install`, `activate`, `version`,
@@ -101,7 +116,8 @@ The only thing left to call yourself is a named feature, because only you know w
 $tracker = my_plugin_tracker();
 
 if ( $tracker ) {
-	$tracker->track( \CxTrackerSdk_v1_2_0_9f7703\Event::FEATURE, array( 'name' => 'csv_export' ) );
+	// 'feature' as a bare string, so this line does not name the SDK's namespace either.
+	$tracker->track( 'feature', array( 'name' => 'csv_export' ) );
 }
 ```
 
@@ -266,8 +282,8 @@ composer verify-collision   # bin/verify-collision.sh -- the two-consumer collis
 ### What `composer dist` produces, and the one naming rule in it
 
 ```
-dist/CxTrackerSdk_v1_2_0_9f7703/      the scoped tree
-dist/CxTrackerSdk_v1_2_0_9f7703.zip   what a plugin author downloads
+dist/CxTrackerSdk_v<version>_<digest>/      the scoped tree      e.g. CxTrackerSdk_v1_2_0_9f7703/
+dist/CxTrackerSdk_v<version>_<digest>.zip   what an author downloads
 ```
 
 The **file** is named for the scoped namespace, which is how anyone looking at the backend's uploads

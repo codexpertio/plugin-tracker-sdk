@@ -135,8 +135,10 @@ makes the block idempotent at the file level.
 contains the version (`CxTrackerSdk_v<version>_<digest>`), so it changes on every SDK upgrade. An
 earlier form of this snippet wrote that name into the author's plugin file, which made upgrading a
 two-step operation with no warning if you did only the first: drop in the new folder, forget the
-snippet, and the plugin fatals on activation with `Class "CxTrackerSdk_v1_2_0_9f7703\Tracker" not
-found` — on the author's users' sites, from an upgrade that looked complete. `autoload.php` returns
+snippet, and the plugin fatals on activation with `Class "CxTrackerSdk_v<the version they upgraded
+FROM>…\Tracker" not found` — on the author's users' sites, from an upgrade that looked complete. The
+name in that error is the *old* one, which is the tell: the folder moved on and the snippet did not.
+`autoload.php` returns
 the class name instead, so replacing the folder is the whole upgrade.
 
 **The `is_file()` / `is_string()` / `class_exists()` guards, and the `null` return.** A telemetry SDK
