@@ -4,7 +4,26 @@ The dashboard hands a plugin author one block to paste into their **main plugin 
 own bootstrap. That block is the entire integration: no hooks to register, no events to call, no
 settings screen to build.
 
-## What the dashboard emits
+## Two routes, two snippets
+
+The SDK ships **both** as a downloadable zip and as a Composer package, and the snippet is not the
+same for the two. They differ in how the Tracker class is reached and in what that class is called;
+the dashboard has a switch and generates the matching one. An author who pastes the other one gets a
+fatal at activation, not a degradation, so this document covers both.
+
+> [!IMPORTANT]
+> **Order matters in this file, and not for readability.** `bin/build-dist.sh` learns what folder
+> the zip must unpack to by grepping this document for the first `__DIR__`-relative autoload path
+> and taking the directory out of it. The download snippet below is that first occurrence.
+>
+> Anything written above it in that same shape captures the build instead — the Composer variant's
+> own autoload line qualifies, and so does an example that merely quotes the pattern. The zip then
+> unpacks to whatever that line named, the snippet's require resolves to nothing, and the author's
+> site fatals on activation. This note is deliberately worded to avoid matching it.
+>
+> Keep the download snippet first, and re-run `composer dist` after editing this file.
+
+## What the dashboard emits — downloaded zip
 
 ```php
 /**
@@ -16,7 +35,7 @@ settings screen to build.
 if ( ! function_exists( 'my_plugin_tracker' ) ) {
 
 	/**
-	 * @return object|null The SDK's Tracker, or null if the SDK is not present.
+	 * @return object|null The SDK's Tracker, or null when the SDK is not present.
 	 */
 	function my_plugin_tracker() {
 		global $my_plugin_tracker;
@@ -24,20 +43,26 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 		if ( ! isset( $my_plugin_tracker ) ) {
 			$my_plugin_tracker = false;
 
-			$my_plugin_tracker_autoload = __DIR__ . '/plugin-tracker-sdk/autoload.php';
+			// Ask the SDK for its own class name rather than naming it here: the download
+			// scopes its namespace per version, so upgrading it would break a hard-coded name.
+			$tracker_autoload = __DIR__ . '/plugin-tracker-sdk/autoload.php';
+			$tracker_class    = is_file( $tracker_autoload ) ? require $tracker_autoload : '';
 
-			if ( is_file( $my_plugin_tracker_autoload ) ) {
-				$my_plugin_tracker_class = require $my_plugin_tracker_autoload;
-
-				if ( is_string( $my_plugin_tracker_class ) && class_exists( $my_plugin_tracker_class ) ) {
-					$my_plugin_tracker = $my_plugin_tracker_class::init(
-						array(
-							'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87',
-							'file'    => __FILE__,
-							'enabled' => true,
-						)
-					);
-				}
+			// Every way the SDK can be missing or broken -- not shipped, half-extracted, renamed
+			// folder -- ends up here as a no-op instead of a fatal. A telemetry SDK must never be
+			// the reason a site goes down, so do not remove this check.
+			if ( is_string( $tracker_class ) && class_exists( $tracker_class ) ) {
+				$my_plugin_tracker = $tracker_class::init(
+					array(
+						'hash'    => '4f3c2a1b9e8d7c6b5a4f3e2d1c0b9a87',
+						'file'    => __FILE__,
+						'enabled' => true,
+						// Which optional fields this release sends. Editing it changes your NEXT
+						// release only -- what is kept for installs already published is decided by
+						// the collection settings on the dashboard.
+						'collect' => 'all',
+					)
+				);
 			}
 		}
 
@@ -50,6 +75,56 @@ if ( ! function_exists( 'my_plugin_tracker' ) ) {
 // ... your own plugin's bootstrap follows.
 ```
 
+## What the dashboard emits — Composer
+
+Two differences, both in the generated code rather than in anything the author writes.
+
+Composer's autoloader is required **above** the `function_exists` guard, where the SDK's own example
+plugin puts it. Inside, it would be skipped exactly when the guard does its job — a second copy of
+the plugin, a hand-duplicated file — and it is a plugin-wide concern rather than part of the
+accessor.
+
+And the class is named outright. Nothing rewrites the namespace on this path, so there is no artifact
+to ask: the SDK's own unscoped `Tracker` is a fixed name that cannot go stale on upgrade.
+
+**That name is deliberately not written out below.** This file is copied into the scoped artifact,
+and `bin/build-dist.sh` refuses to ship an artifact containing any occurrence of the unscoped
+namespace — a check worth keeping, because a downloaded copy is exactly where that name must never
+appear: pasting it there is the activation fatal this whole design exists to avoid. The repository
+README carries the literal, where it is safe.
+
+```php
+// Composer's autoloader, which is what loads the SDK. Leave this out if your
+// plugin already requires it -- require_once will not load it twice either way.
+require_once __DIR__ . '/vendor/autoload.php';
+
+if ( ! function_exists( 'my_plugin_tracker' ) ) {
+
+	function my_plugin_tracker() {
+		global $my_plugin_tracker;
+
+		if ( ! isset( $my_plugin_tracker ) ) {
+			$my_plugin_tracker = false;
+
+			// Composer resolves this name directly -- it is not rewritten on that path.
+			// The generator writes the SDK's unscoped Tracker FQCN here; see the README.
+			$tracker_class = '\…\Tracker';
+
+			if ( is_string( $tracker_class ) && class_exists( $tracker_class ) ) {
+				$my_plugin_tracker = $tracker_class::init( /* ... as above ... */ );
+			}
+		}
+
+		return $my_plugin_tracker ? $my_plugin_tracker : null;
+	}
+
+	my_plugin_tracker();
+}
+```
+
+The `class_exists()` guard survives on this route too, and is not redundant there: a consumer can
+ship without running `composer install`, and the failure has to stay a no-op rather than a fatal.
+
 ## Why each part is shaped that way
 
 **`function_exists()` around the whole block.** Two plugins by the same author can each carry a
@@ -60,7 +135,7 @@ makes the block idempotent at the file level.
 contains the version (`CxTrackerSdk_v<version>_<digest>`), so it changes on every SDK upgrade. An
 earlier form of this snippet wrote that name into the author's plugin file, which made upgrading a
 two-step operation with no warning if you did only the first: drop in the new folder, forget the
-snippet, and the plugin fatals on activation with `Class "CxTrackerSdk_v1_0_0_92521f\Tracker" not
+snippet, and the plugin fatals on activation with `Class "CxTrackerSdk_v1_2_0_9f7703\Tracker" not
 found` — on the author's users' sites, from an upgrade that looked complete. `autoload.php` returns
 the class name instead, so replacing the folder is the whole upgrade.
 
