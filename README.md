@@ -30,19 +30,28 @@ resolved `Codexpert\PluginTracker\Tracker`, and pasting the wrong snippet was a 
 Identical code, identical namespace, either way now.
 
 ```bash
-composer require codexpertio/plugin-tracker-sdk:^1.2
+composer require codexpertio/plugin-tracker-sdk:^1.3
 ```
 
-Pin the constraint — `:^1.2` — for anything shipped to sites you do not control. Composer falls back
-to the default branch when a constraint cannot resolve, and `dev-master` inside a distributed plugin
-is a moving target on somebody else's site.
+**Keep a constraint**, whatever version you pin to, for anything shipped to sites you do not control.
+Composer falls back to the default branch when a constraint cannot resolve, and `dev-master` inside a
+distributed plugin is a moving target on somebody else's site — `^1.3` takes every 1.3.x release,
+including fixes published after you shipped, and never takes a branch.
 
-One caveat if you go checking: `packagist.org/packages/codexpertio/plugin-tracker-sdk.json` reports
-`crawledAt: null` and lists only `dev-*` branches, which reads as though nothing is published. It is
-not the endpoint Composer uses. `repo.packagist.org/p2/...` lists `v1.2.0`, and a real
-`composer require codexpertio/plugin-tracker-sdk:^1.2` locks it. The repository is connected to
-Packagist through its GitHub integration and picks up pushed tags on its own, which is why the
-release workflow does not notify it.
+**Packagist is not currently in step with the tags here.** `repo.packagist.org/p2/...` — the endpoint
+Composer actually reads — lists `v1.2.0` and nothing newer, while this repository has `v1.3.0` and
+`v1.3.1`. This README used to say the GitHub integration "picks up pushed tags on its own, which is
+why the release workflow does not notify it". Two tagged releases later, that is demonstrably not
+happening, and until somebody re-syncs the package on Packagist a `^1.3` constraint cannot resolve at
+all. Check the p2 endpoint before assuming a failed `composer require` is your mistake:
+
+```bash
+curl -s https://repo.packagist.org/p2/codexpertio/plugin-tracker-sdk.json | grep -o '"version":"[^"]*"'
+```
+
+(A separate caveat, which caused confusion once already:
+`packagist.org/packages/codexpertio/plugin-tracker-sdk.json` reports `crawledAt: null` and lists only
+`dev-*` branches. That is the wrong endpoint — it is not what Composer reads.)
 
 The alternative is the **release asset**, unzipped beside your main plugin file:
 
