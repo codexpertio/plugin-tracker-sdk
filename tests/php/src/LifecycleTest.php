@@ -709,4 +709,40 @@ class LifecycleTest extends PluginTrackerTestCase {
 			'a site that has already reported its install must gain nothing from a second consent submission'
 		);
 	}
+
+	/**
+	 * The activation stamp the consent delay counts from.
+	 *
+	 * Written on activation and NOT on the install event, which is the distinction that makes it
+	 * usable: `installed` is only recorded once the install event was actually accepted, and that
+	 * cannot happen before consent -- so at prompt time, which is the moment this value is needed,
+	 * `installed` is still empty on every site that has not opted in.
+	 */
+	public function test_on_activate_stamps_when_this_site_activated() {
+		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$before = time();
+		$lifecycle->on_activate();
+
+		$this->assertGreaterThanOrEqual( $before, (int) $this->stored( $config, 'activated' ) );
+	}
+
+	/**
+	 * Written once, ever. Re-stamping on each activation would restart the delay every time the
+	 * plugin is toggled, so a site that deactivates now and then is asked later and later and
+	 * eventually never -- silence produced by a setting that only claims to postpone.
+	 */
+	public function test_the_activation_stamp_is_not_rewritten_by_a_later_activation() {
+		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->stub_undeliverable_flush();
+
+		\PluginTracker_Test_Option_Store::update( $config->option( 'activated' ), 1700000000 );
+
+		$lifecycle->on_activate();
+		$lifecycle->on_deactivate();
+		$lifecycle->on_activate();
+
+		$this->assertSame( 1700000000, (int) $this->stored( $config, 'activated' ) );
+	}
 }

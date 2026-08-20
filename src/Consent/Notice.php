@@ -70,7 +70,51 @@ class Notice {
 			return;
 		}
 
+		if ( ! $this->due() ) {
+			return;
+		}
+
 		$this->render_prompt();
+	}
+
+	/**
+	 * Has the author's delay elapsed on this site?
+	 *
+	 * The delay is an author's courtesy -- asking on a site's first day, before the plugin has done
+	 * anything for anyone, is how a prompt gets dismissed without being read. It is deliberately the
+	 * weakest of the gates: it postpones the question, it never withdraws it.
+	 *
+	 * **An absent stamp asks now rather than never.** A plugin that was already active when this SDK
+	 * arrived has no activation to count from, and treating that as "not due yet" would leave those
+	 * sites -- every existing install of an established plugin, which is most of them -- silently
+	 * unasked forever, while the code reads as though consent were being collected.
+	 *
+	 * @return bool
+	 */
+	private function due() {
+
+		$wait = $this->config->consent_after();
+
+		if ( $wait < 1 ) {
+			return true;
+		}
+
+		$since = (int) get_option( $this->config->option( 'activated' ) );
+
+		if ( $since < 1 ) {
+			return true;
+		}
+
+		// A clock moved backwards -- restored backup, corrected timezone, a host's NTP catching up --
+		// makes this difference negative, which must not become a delay nobody can wait out. Anything
+		// that cannot be read as elapsed time is treated as due.
+		$elapsed = time() - $since;
+
+		if ( $elapsed < 0 ) {
+			return true;
+		}
+
+		return $elapsed >= $wait;
 	}
 
 	/**

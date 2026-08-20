@@ -83,6 +83,22 @@ class Lifecycle {
 	 */
 	public function on_activate() {
 
+		// When this site first activated the plugin, which is what the consent delay counts from.
+		//
+		// Written unconditionally and BEFORE anything consent-dependent below, because it is the one
+		// thing here that must exist while consent is still unanswered -- Notice reads it to decide
+		// whether the prompt is due yet. Nothing leaves the site: it is a local timestamp, and
+		// recording it is not telemetry.
+		//
+		// Only ever written once. Re-stamping on every activation would restart the delay each time
+		// the plugin is toggled, so a site that deactivates now and then would be asked later and
+		// later, and eventually never.
+		$activated = $this->config->option( 'activated' );
+
+		if ( ! get_option( $activated ) ) {
+			update_option( $activated, time(), false );
+		}
+
 		// `install` is the first activation ever on this site, `activate` is every activation
 		// including that one. Distinguished by a stored marker rather than by "is the version option
 		// empty", so a consumer who clears their own options cannot make the site look new.

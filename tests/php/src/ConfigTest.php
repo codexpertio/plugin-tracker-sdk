@@ -381,4 +381,57 @@ class ConfigTest extends PluginTrackerTestCase {
 		$this->assertSame( $without->option( 'queue' ), $with->option( 'queue' ) );
 		$this->assertSame( $without->plugin(), $with->plugin() );
 	}
+
+	/*
+	|--------------------------------------------------------------------------
+	| consent_after
+	|--------------------------------------------------------------------------
+	*/
+
+	/**
+	 * The default is the behaviour of every release shipped before the argument existed, so a snippet
+	 * that has never heard of it keeps asking exactly when it always did.
+	 */
+	public function test_consent_after_defaults_to_asking_immediately() {
+		$this->assertSame( 0, $this->make_config()->consent_after() );
+	}
+
+	public function test_consent_after_keeps_a_plain_number_of_seconds() {
+		$config = $this->make_config( array( 'consent_after' => 172800 ) );
+
+		$this->assertSame( 172800, $config->consent_after() );
+	}
+
+	/**
+	 * The snippet is PHP an author can edit, so this arrives however they wrote it. A numeric string
+	 * is the same intent as the number.
+	 */
+	public function test_consent_after_accepts_the_value_as_a_string() {
+		$config = $this->make_config( array( 'consent_after' => '1209600' ) );
+
+		$this->assertSame( 1209600, $config->consent_after() );
+	}
+
+	/**
+	 * A cast is not a check: `(int) '30 days'` is 30, which read as seconds is half a minute -- an
+	 * immediate prompt dressed as a delay. Unreadable values ask sooner, never later.
+	 */
+	public function test_an_unreadable_delay_asks_immediately() {
+		foreach ( array( '30 days', 'soon', true, null, array(), -5 ) as $value ) {
+			$config = $this->make_config( array( 'consent_after' => $value ) );
+
+			$this->assertSame( 0, $config->consent_after(), 'an unreadable delay must not postpone the prompt' );
+		}
+	}
+
+	/**
+	 * A hand-edited snippet is the case this bounds. Past five years the argument stops meaning "ask
+	 * later" and starts meaning "do not ask", which is a consent prompt that does not exist shipped
+	 * under a plugin claiming to collect consent. `'enabled' => false` is the honest way to say that.
+	 */
+	public function test_an_unbounded_delay_is_clamped_rather_than_honoured() {
+		$config = $this->make_config( array( 'consent_after' => 99999999999 ) );
+
+		$this->assertSame( 157680000, $config->consent_after() );
+	}
 }
