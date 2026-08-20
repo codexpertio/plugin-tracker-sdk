@@ -30,28 +30,32 @@ resolved `Codexpert\PluginTracker\Tracker`, and pasting the wrong snippet was a 
 Identical code, identical namespace, either way now.
 
 ```bash
-composer require codexpertio/plugin-tracker-sdk:^1.3
+composer require codexpertio/plugin-tracker-sdk
 ```
 
-**Keep a constraint**, whatever version you pin to, for anything shipped to sites you do not control.
-Composer falls back to the default branch when a constraint cannot resolve, and `dev-master` inside a
-distributed plugin is a moving target on somebody else's site — `^1.3` takes every 1.3.x release,
-including fixes published after you shipped, and never takes a branch.
+No version constraint, which is a change: this used to read `:^1.2`.
 
-**Packagist is not currently in step with the tags here.** `repo.packagist.org/p2/...` — the endpoint
-Composer actually reads — lists `v1.2.0` and nothing newer, while this repository has `v1.3.0` and
-`v1.3.1`. This README used to say the GitHub integration "picks up pushed tags on its own, which is
-why the release workflow does not notify it". Two tagged releases later, that is demonstrably not
-happening, and until somebody re-syncs the package on Packagist a `^1.3` constraint cannot resolve at
-all. Check the p2 endpoint before assuming a failed `composer require` is your mistake:
+The pin was there to stop Composer falling back to `dev-master` inside a plugin distributed to sites
+you cannot reach. That hazard is real but it is not what a bare require does once the package has a
+stable tag — Composer resolves the latest **stable** release and writes the caret into your
+`composer.json` for you, so you end up pinned either way, at whatever was current when you installed
+rather than at whatever was current when this README was last edited. `dev-master` is only reachable
+when no stable version exists at all, which stopped being true at v1.2.0.
+
+Written-down constraints age badly: nobody edits the docs when a release lands, so `:^1.2` quietly
+kept new integrations on an SDK from before the consent delay and before `opt_out()` stopped leaving
+the install token and salt behind.
+
+**One caveat on checking Packagist**, since `repo.packagist.org/p2/...` is the endpoint Composer
+actually reads and it can lag behind the tags here:
 
 ```bash
 curl -s https://repo.packagist.org/p2/codexpertio/plugin-tracker-sdk.json | grep -o '"version":"[^"]*"'
 ```
 
-(A separate caveat, which caused confusion once already:
+A separate trap, which has confused a reader before:
 `packagist.org/packages/codexpertio/plugin-tracker-sdk.json` reports `crawledAt: null` and lists only
-`dev-*` branches. That is the wrong endpoint — it is not what Composer reads.)
+`dev-*` branches. That is the wrong endpoint — it is not what Composer reads.
 
 The alternative is the **release asset**, unzipped beside your main plugin file:
 
