@@ -102,7 +102,7 @@ class Tracker {
 	 * Minor rather than patch because the wire format gained fields and consumers gain public API in
 	 * `Environment`, which is where the two readings moved so both lanes share one definition.
 	 */
-	const VERSION = '1.3.0';
+	const VERSION = '1.3.1';
 
 	/**
 	 * How many times one batch may be retried before it is dropped.
