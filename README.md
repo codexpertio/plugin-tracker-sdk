@@ -2,7 +2,7 @@
 
 # Plugin Tracker SDK
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](src/Tracker.php)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](src/Tracker.php)
 [![PHP](https://img.shields.io/badge/PHP-7.2%2B-777bb4.svg)](composer.json)
 [![License](https://img.shields.io/badge/license-GPL%20v3%20or%20later-green.svg)](LICENSE)
 
