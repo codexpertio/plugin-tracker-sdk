@@ -7,7 +7,10 @@
 
 namespace Codexpert\PluginTracker\Test\Consent;
 
+use Brain\Monkey\Functions;
 use Codexpert\PluginTracker\Consent\Gate;
+use Codexpert\PluginTracker\Cron\Scheduler;
+use Codexpert\PluginTracker\Storage\Install;
 use Codexpert\PluginTracker\Test\PluginTrackerTestCase;
 
 /**
@@ -171,5 +174,107 @@ class GateTest extends PluginTrackerTestCase {
 
 		$this->assertFalse( $consent->site_opted_in() );
 		$this->assertFalse( $consent->answered() );
+	}
+
+	/*
+	|--------------------------------------------------------------------------
+	| What an opt-out takes with it
+	|--------------------------------------------------------------------------
+	|
+	| docs/CONSENT.md promises that "state does not survive an explicit opt-out". That promise used
+	| to be kept by Tracker::handle_consent() -- the handler behind the built-in notice -- and by
+	| nothing else, so a consumer rendering their own opt-out UI through Tracker::consent() recorded
+	| the refusal and kept the token, the queue, the armed flush and the salt.
+	|
+	| These bind the promise to the gate, which is the door every caller comes through.
+	*/
+
+	/**
+	 * The queued events go. Consent precedes collection, not merely transmission, so holding them
+	 * against a possible future opt-in is not an option.
+	 */
+	public function test_opt_out_clears_the_queue() {
+		$config = $this->make_config();
+		$this->seed_queue( $config, 5 );
+
+		$this->assertSame( 5, $this->queue_for( $config )->count(), 'the fixture must actually queue something' );
+
+		( new Gate( $config ) )->opt_out();
+
+		$this->assertSame( 0, $this->queue_for( $config )->count(), 'events collected under the previous consent must not survive it' );
+	}
+
+	/**
+	 * The ingestion credential goes. A live token on a site that said no is the thing an opt-out is
+	 * supposed to remove.
+	 */
+	public function test_opt_out_discards_the_install_token() {
+		$config = $this->make_config();
+		$this->seed_token( $config );
+
+		( new Gate( $config ) )->opt_out();
+
+		$this->assertSame( '', (string) $this->stored( $config, 'token' ), 'the token must not outlive the consent it was issued under' );
+	}
+
+	/**
+	 * The salt goes, which is what actually breaks the correlation: the anonymous install ID is
+	 * derived from it, so a new one means previously reported data can no longer be tied to this site.
+	 */
+	public function test_opt_out_forgets_the_install_salt() {
+		$config  = $this->make_config();
+		$install = new Install( $config );
+
+		$before = $install->id();
+		$this->assertNotSame( '', $before );
+
+		( new Gate( $config ) )->opt_out();
+
+		$this->assertNotSame(
+			$before,
+			$install->id(),
+			'opting out and back in must yield a NEW install id -- reusing the old one leaves the site correlatable to data it declined to share'
+		);
+	}
+
+	/**
+	 * And the schedule, so nothing wakes up later to re-register the site that just declined.
+	 *
+	 * Asserted on the CALL rather than on resulting state: the suite's cron stubs are constant --
+	 * wp_next_scheduled() always answers false -- so a state assertion here would pass whether or not
+	 * opt_out() ever cleared anything, which is the shape of test this whole file exists to stop.
+	 */
+	public function test_opt_out_unschedules_the_flush() {
+		$config = $this->make_config();
+		$hook   = ( new Scheduler( $config ) )->hook();
+
+		// A recording alias rather than Functions\expect(): the base class already registers a
+		// catch-all when() for this function in setUp, and an expect() layered on top of that never
+		// sees the call. Re-aliasing replaces the stub outright, which is unambiguous.
+		$cleared = array();
+		Functions\when( 'wp_clear_scheduled_hook' )->alias(
+			function ( $name ) use ( &$cleared ) {
+				$cleared[] = $name;
+				return true;
+			}
+		);
+
+		( new Gate( $config ) )->opt_out();
+
+		$this->assertContains( $hook, $cleared, 'a declined site must not keep a scheduled flush' );
+	}
+
+	/**
+	 * The record itself STAYS. It is what stops the notice asking again on every page load, and
+	 * deleting it would turn a decision into an unanswered question.
+	 */
+	public function test_opt_out_keeps_the_consent_record_itself() {
+		$config = $this->make_config();
+		$gate   = new Gate( $config );
+
+		$gate->opt_out();
+
+		$this->assertTrue( $gate->answered(), 'the admin was asked and answered; the SDK must remember that' );
+		$this->assertFalse( $gate->site_opted_in() );
 	}
 }
