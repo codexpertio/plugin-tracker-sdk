@@ -516,14 +516,18 @@ class LifecycleTest extends PluginTrackerTestCase {
 	}
 
 	/**
-	 * forget() is the uninstall-time cleanup: it must clear exactly the three options this class
-	 * owns, regardless of consent -- an uninstalling site is entitled to end up with none of this
-	 * class's own state left behind either way.
+	 * forget() is the uninstall-time cleanup: it must clear every option this class owns, regardless
+	 * of consent -- an uninstalling site is entitled to end up with none of this class's own state
+	 * left behind either way.
+	 *
+	 * It was written when there were three, and 'activated' arrived in 1.3.0 without being added
+	 * here, which is exactly the gap this now closes. Anything this class starts writing has to be
+	 * added to both the method and this list; there is no way to derive one from the other.
 	 */
-	public function test_forget_clears_env_installed_and_reason() {
+	public function test_forget_clears_every_option_this_class_owns() {
 		list( , $config, $lifecycle ) = $this->ready_lifecycle();
 
-		$lifecycle->on_activate(); // sets 'installed' and 'env'.
+		$lifecycle->on_activate(); // writes the installed marker, the environment snapshot and the activation stamp.
 		$this->seed_stored(
 			$config,
 			'reason',
@@ -533,11 +537,43 @@ class LifecycleTest extends PluginTrackerTestCase {
 			)
 		);
 
+		foreach ( array( 'env', 'installed', 'activated' ) as $suffix ) {
+			$this->assertNotFalse( $this->stored( $config, $suffix ), "the fixture must actually write '$suffix' before forget() is asked to remove it" );
+		}
+
 		$lifecycle->forget();
 
 		$this->assertFalse( $this->stored( $config, 'env' ) );
 		$this->assertFalse( $this->stored( $config, 'installed' ) );
 		$this->assertFalse( $this->stored( $config, 'reason' ) );
+		$this->assertFalse( $this->stored( $config, 'activated' ) );
+	}
+
+	/**
+	 * Why the activation stamp has to go with the rest, stated as behaviour rather than as bookkeeping.
+	 *
+	 * Notice::due() counts the author's consent delay from that stamp. A stamp that survives an
+	 * uninstall is inherited by the NEXT install, so the delay reads as long since elapsed and the
+	 * opt-in prompt fires on the first admin page load of a plugin the site has only just installed --
+	 * the precise behaviour the delay exists to prevent. A reinstall is day one.
+	 */
+	public function test_a_reinstall_restarts_the_consent_delay() {
+		list( , $config, $lifecycle ) = $this->ready_lifecycle();
+
+		$this->stub_undeliverable_flush();
+
+		$lifecycle->on_activate();
+		\PluginTracker_Test_Option_Store::update( $config->option( 'activated' ), 1700000000 );
+
+		// Uninstall, then install again.
+		$lifecycle->forget();
+		$lifecycle->on_activate();
+
+		$this->assertNotSame(
+			1700000000,
+			(int) $this->stored( $config, 'activated' ),
+			'a reinstalled plugin must count its delay from the new activation, not from a previous life'
+		);
 	}
 
 	/**

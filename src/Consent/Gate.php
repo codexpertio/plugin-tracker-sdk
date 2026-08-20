@@ -8,6 +8,9 @@
 namespace Codexpert\PluginTracker\Consent;
 
 use Codexpert\PluginTracker\Config;
+use Codexpert\PluginTracker\Cron\Scheduler;
+use Codexpert\PluginTracker\Storage\Install;
+use Codexpert\PluginTracker\Storage\Queue;
 
 /**
  * Nothing is transmitted unless BOTH gates pass.
@@ -135,10 +138,26 @@ class Gate {
 	}
 
 	/**
-	 * Record an explicit opt-out.
+	 * Record an explicit opt-out, and discard what the site said no to.
 	 *
-	 * The record is kept rather than deleted, so the SDK knows the admin was asked and declined
-	 * and does not nag them again on every page load.
+	 * The record itself is kept rather than deleted, so the SDK knows the admin was asked and
+	 * declined and does not nag them again on every page load. Everything else goes.
+	 *
+	 * ## Why the discarding happens HERE
+	 *
+	 * It used to live in Tracker::handle_consent(), the admin-post handler behind the built-in
+	 * notice, and only there. docs/CONSENT.md has always promised that "state does not survive an
+	 * explicit opt-out" -- and that promise was true of the form and false of the API. Tracker
+	 * exposes consent() precisely so a consumer can render their own opt-out UI, and a consumer who
+	 * did that recorded the refusal while keeping the install token, the queued events, the armed
+	 * flush and the salt the anonymous install ID is derived from.
+	 *
+	 * That is the worst possible place for the two paths to disagree. A site that declined kept a
+	 * live ingestion credential and the identifier its previously reported data is keyed to, and
+	 * the consumer had no way to know: they called the method the docblock pointed them at.
+	 *
+	 * A guarantee that only holds when you enter through one door is not a guarantee. It belongs at
+	 * the point the decision is recorded, which is here.
 	 *
 	 * @return void
 	 */
@@ -152,6 +171,46 @@ class Gate {
 			),
 			false
 		);
+
+		$this->discard_state();
+	}
+
+	/**
+	 * Everything an opt-out has to take with it.
+	 *
+	 * Collaborators are constructed from Config rather than injected, which keeps opt_out() callable
+	 * from anywhere holding a Gate -- including a consumer's own settings screen. Each of Queue,
+	 * Scheduler and Install takes nothing but Config and owns one option, so there is no shared state
+	 * for a second instance to disagree with.
+	 *
+	 * Order matters at the end: the salt goes LAST. The install ID is derived from it, so anything
+	 * that still wants to name this install has to do so before that line runs.
+	 *
+	 * The retry counters are deliberately NOT touched here. They are integers describing how a
+	 * transmission went, they identify nothing and correlate to nothing, and Tracker owns them --
+	 * this method is for what a site declining could be tracked BY.
+	 *
+	 * @return void
+	 */
+	private function discard_state() {
+
+		// The schedule first, so nothing can fire mid-teardown and re-register against the token
+		// this is about to delete.
+		( new Scheduler( $this->config ) )->unschedule();
+
+		// Events collected under the previous consent. CONSENT.md's rule is that consent precedes
+		// collection, not merely transmission, so holding them for a possible future opt-in is not
+		// an option.
+		( new Queue( $this->config ) )->clear();
+
+		// The ingestion credential. Keeping a live token for a site that has explicitly said no is
+		// not defensible, and re-registration is cheap if they opt back in.
+		delete_option( $this->config->option( 'token' ) );
+
+		// Consequence, accepted deliberately and documented in CONSENT.md: a site that opts out and
+		// later opts back in gets a NEW install ID, so it counts more than once on the dashboard.
+		// Leaving a live identifier on a site that declined is the worse trade.
+		( new Install( $this->config ) )->forget();
 	}
 
 	/**

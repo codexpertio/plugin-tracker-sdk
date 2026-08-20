@@ -80,11 +80,16 @@ correctly re-prompts under a new policy rather than treating "declined under the
 
 ### An explicit opt-out also resets the anonymous install ID
 
-`Gate::opt_out()` itself only records the decision. The cleanup that actually happens when an admin
-clicks "No thanks" lives in `Tracker::handle_consent()`, and it goes further than the consent record:
-it unschedules the flush, clears the local queue, discards the stored token -- **and calls
-`Install::forget()`**, which deletes the local salt the anonymous install ID is derived from (see
+`Gate::opt_out()` does more than record the decision. It unschedules the flush, clears the local
+queue, discards the stored token -- **and calls `Install::forget()`**, which deletes the local salt
+the anonymous install ID is derived from (see
 [`EVENTS.md`](EVENTS.md#the-anonymous-install-id)).
+
+That cleanup used to live one level up, in `Tracker::handle_consent()` — the handler behind the
+built-in notice — and nowhere else. So the guarantee below held for an admin clicking "No thanks" and
+not for a consumer calling `$tracker->consent()->opt_out()` from their own settings screen, which is
+the very thing `Tracker::consent()` is exposed for. It now lives at the point the decision is
+recorded, so every caller gets it.
 
 That means state does **not** survive an explicit opt-out. Consequence, accepted deliberately: a
 site that opts out and later opts back in gets a **new** install ID, so a site that cycles consent

@@ -258,5 +258,14 @@ class Lifecycle {
 		delete_option( $this->config->option( 'env' ) );
 		delete_option( $this->config->option( 'installed' ) );
 		delete_option( $this->config->option( 'reason' ) );
+
+		// The activation stamp, added in 1.3.0 for the consent delay and missed here at the time.
+		//
+		// Leaving it behind was not merely untidy. Notice::due() counts the author's delay from this
+		// value, so a plugin uninstalled and later reinstalled inherited an activation date from its
+		// previous life -- the delay read as long since elapsed and the opt-in prompt fired on the
+		// first admin page load, which is the exact behaviour the delay exists to prevent. A
+		// reinstall is day one and has to be counted as one.
+		delete_option( $this->config->option( 'activated' ) );
 	}
 }

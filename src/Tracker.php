@@ -864,21 +864,15 @@ class Tracker {
 
 			$this->scheduler->ensure_scheduled();
 		} else {
+			// The schedule, the queue, the token and the salt all go with the refusal, and they go
+			// inside opt_out() rather than here. They used to be unwound in this handler, which meant
+			// the guarantee CONSENT.md makes held for the built-in notice and not for a consumer
+			// rendering their own UI through consent(). See Gate::opt_out().
 			$this->consent->opt_out();
-			$this->scheduler->unschedule();
-			$this->queue->clear();
+
+			// Tracker's own retry counters, which the gate deliberately leaves alone: they are not
+			// state a declining site could be tracked by, and this class owns them.
 			$this->reset_attempts();
-
-			// The ingestion credential is dropped too. Keeping a live token for a site that has
-			// explicitly said no is not defensible, and re-registration is cheap if they opt back in.
-			$this->forget_token();
-
-			// And the salt, which is what the anonymous install ID is derived from. A site that
-			// declined should retain nothing that can be correlated to data we already hold.
-			// Consequence, accepted deliberately: opting out and back in yields a NEW install ID, so
-			// a site that cycles consent counts more than once. Leaving a live identifier on a site
-			// that said no is the worse trade.
-			$this->install->forget();
 		}
 
 		wp_safe_redirect( wp_get_referer() ? wp_get_referer() : admin_url() );
