@@ -154,6 +154,33 @@ class Config {
 	private $collect = self::COLLECT_ALL;
 
 	/**
+	 * How many seconds after activation to wait before showing the opt-in prompt.
+	 *
+	 * Seconds rather than a unit and an amount, because this end has no use for the author's phrasing:
+	 * the dashboard keeps "2 weeks" so it can say "2 weeks" back, and multiplies once on the way into
+	 * the snippet. Here it is arithmetic against `time()`.
+	 *
+	 * Zero -- ask on the first admin page load -- is the default and is what every release shipped
+	 * before this argument existed does, so an older snippet keeps its exact behaviour.
+	 *
+	 * @var int
+	 */
+	private $consent_after = 0;
+
+	/**
+	 * The longest delay this SDK will honour, in seconds. Five years.
+	 *
+	 * A ceiling has to exist and it is not really about the five. Past some point "ask later" is
+	 * indistinguishable from "do not ask", and a consent prompt nobody is ever shown is worse than no
+	 * prompt at all -- it is the same absence, shipped under a plugin that says consent is collected.
+	 * An author who genuinely wants silence has an honest way to say so: `'enabled' => false`.
+	 *
+	 * The number also keeps `time()` arithmetic inside a signed 32-bit integer, which old hosts still
+	 * have to survive.
+	 */
+	const CONSENT_AFTER_MAX = 157680000;
+
+	/**
 	 * Build from a consumer-supplied array.
 	 *
 	 * @param array $args Raw arguments as passed to Tracker::init().
@@ -168,6 +195,8 @@ class Config {
 		$this->file    = isset( $args['file'] ) && is_string( $args['file'] ) ? $args['file'] : '';
 		$this->enabled = ! empty( $args['enabled'] );
 		$this->collect = self::normalize_collect( isset( $args['collect'] ) ? $args['collect'] : self::COLLECT_ALL );
+
+		$this->consent_after = self::normalize_consent_after( isset( $args['consent_after'] ) ? $args['consent_after'] : 0 );
 
 		if ( isset( $args['endpoint'] ) && is_string( $args['endpoint'] ) && '' !== $args['endpoint'] ) {
 			$this->endpoint = rtrim( $args['endpoint'], '/' );
@@ -601,6 +630,54 @@ class Config {
 	 */
 	public function collect() {
 		return $this->collect;
+	}
+
+	/**
+	 * How long to wait after activation before asking this site's admin to opt in, in seconds.
+	 *
+	 * **This one lives only here, and that is not a limitation to route around.** The dashboard's
+	 * other settings are enforced on ingestion, which is what lets them reach installs already
+	 * published. The prompt this delays runs before the site has agreed to be in touch at all, so
+	 * there is no request to enforce against -- the only way to make it server-controlled would be
+	 * to call home for permission to ask permission, which is the thing consent exists to prevent
+	 * and the thing a WordPress.org reviewer would fail the plugin for.
+	 *
+	 * So it takes effect from the release that carries it forward, and Notice is where it is applied.
+	 *
+	 * @return int Seconds, 0 to CONSENT_AFTER_MAX.
+	 */
+	public function consent_after() {
+		return $this->consent_after;
+	}
+
+	/**
+	 * Reduce a `consent_after` argument to a usable number of seconds.
+	 *
+	 * Everything unreadable resolves to 0, which asks SOONER rather than later. That direction is
+	 * the whole point: the failure worth guarding against is a typo or a hand-edited snippet
+	 * silencing the prompt indefinitely, and an admin asked on day one can decline in one click,
+	 * while an admin never asked has had the decision made for them.
+	 *
+	 * `is_numeric()` rather than `is_int()`, because a cast is not a check -- `(int) '30 days'` is
+	 * 30, which would honour a value the author never wrote (and, read as seconds, would be half a
+	 * minute rather than a month -- an immediate prompt dressed as a delay).
+	 *
+	 * @param mixed $value Raw argument.
+	 * @return int
+	 */
+	private static function normalize_consent_after( $value ) {
+
+		if ( ! is_numeric( $value ) ) {
+			return 0;
+		}
+
+		$days = (int) $value;
+
+		if ( $days < 1 ) {
+			return 0;
+		}
+
+		return min( $days, self::CONSENT_AFTER_MAX );
 	}
 
 	/**

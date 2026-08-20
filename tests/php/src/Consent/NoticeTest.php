@@ -343,4 +343,111 @@ class NoticeTest extends PluginTrackerTestCase {
 			'the filtered string must still render, but only in its escaped form'
 		);
 	}
+
+	/*
+	|--------------------------------------------------------------------------
+	| Gate 4: the author's delay
+	|--------------------------------------------------------------------------
+	|
+	| The weakest of the gates on purpose -- it postpones the question, it never withdraws it. These
+	| are mostly about the ways "postpone" turns into "never", each of which ships a plugin that says
+	| consent is collected and never asks for it.
+	*/
+
+	/**
+	 * @param int      $wait      Seconds the author configured.
+	 * @param int|null $activated Activation stamp to seed, or null to leave the site unstamped.
+	 * @return string The rendered notice output.
+	 */
+	private function render_with_delay( $wait, $activated = null ) {
+		$config = $this->make_config(
+			array(
+				'enabled'       => true,
+				'consent_after' => $wait,
+			)
+		);
+
+		if ( null !== $activated ) {
+			\PluginTracker_Test_Option_Store::update( $config->option( 'activated' ), $activated );
+		}
+
+		$notice = new Notice( $config, new Gate( $config ) );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+
+		ob_start();
+		$notice->render();
+
+		return ob_get_clean();
+	}
+
+	public function test_the_prompt_waits_while_the_authors_delay_is_still_running() {
+		$output = $this->render_with_delay( 7 * 86400, time() - ( 2 * 86400 ) );
+
+		$this->assertStringNotContainsString( 'can send anonymous usage data', $output );
+	}
+
+	public function test_the_prompt_appears_once_the_delay_has_elapsed() {
+		$output = $this->render_with_delay( 7 * 86400, time() - ( 8 * 86400 ) );
+
+		$this->assertStringContainsString( 'can send anonymous usage data', $output );
+	}
+
+	/**
+	 * The boundary belongs to the admin, not to the delay: on the day it expires the question is due.
+	 */
+	public function test_the_prompt_appears_the_moment_the_delay_expires() {
+		$output = $this->render_with_delay( 7 * 86400, time() - ( 7 * 86400 ) );
+
+		$this->assertStringContainsString( 'can send anonymous usage data', $output );
+	}
+
+	/**
+	 * A plugin that was already active when this SDK arrived has no activation to count from. Reading
+	 * that as "not due yet" would leave every existing install of an established plugin silently
+	 * unasked forever -- which is most of the installs there are.
+	 */
+	public function test_a_site_with_no_activation_stamp_is_asked_now_rather_than_never() {
+		$output = $this->render_with_delay( 30 * 86400 );
+
+		$this->assertStringContainsString( 'can send anonymous usage data', $output );
+	}
+
+	/**
+	 * A restored backup, a corrected timezone or a host's NTP catching up can put the stamp in the
+	 * future. That must not become a delay nobody can wait out.
+	 */
+	public function test_a_stamp_in_the_future_does_not_postpone_the_prompt_indefinitely() {
+		$output = $this->render_with_delay( 7 * 86400, time() + ( 400 * 86400 ) );
+
+		$this->assertStringContainsString( 'can send anonymous usage data', $output );
+	}
+
+	/**
+	 * Sub-day delays are the reason this is seconds rather than days. "6 hours" is a real answer for a
+	 * plugin somebody configures in one sitting, and a day-granular field could not express it.
+	 */
+	public function test_a_delay_shorter_than_a_day_is_honoured() {
+		$this->assertStringNotContainsString(
+			'can send anonymous usage data',
+			$this->render_with_delay( 6 * 3600, time() - 3600 ),
+			'an hour into a six-hour delay, the prompt must still be waiting'
+		);
+
+		$this->assertStringContainsString(
+			'can send anonymous usage data',
+			$this->render_with_delay( 6 * 3600, time() - ( 7 * 3600 ) )
+		);
+	}
+
+	/**
+	 * Zero is the default and the behaviour of every release shipped before this argument existed, so
+	 * an older snippet must keep asking exactly when it always did.
+	 */
+	public function test_no_delay_asks_on_the_first_admin_load() {
+		$output = $this->render_with_delay( 0, time() );
+
+		$this->assertStringContainsString( 'can send anonymous usage data', $output );
+	}
 }

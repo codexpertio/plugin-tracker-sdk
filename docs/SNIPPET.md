@@ -233,13 +233,47 @@ Everything, without further involvement from the author:
 | `register_activation_hook` | `install` on the first activation ever, `activate` on every one |
 | `register_deactivation_hook` | `deactivation`, carrying the reason the modal collected if there is one — and sends it in the same request, because nothing later can |
 | `init` | Detects a plugin-version change (`version`) and a WP or PHP change (`compat`) |
-| `admin_notices` | The consent prompt, until the administrator answers it |
+| `admin_notices` | The consent prompt, until the administrator answers it — or later, if `consent_after` says so |
 | `admin_footer-plugins.php` | The deactivation-feedback modal, on this plugin's row only |
 | A scheduled job | The jittered flush; never on a page request, except the deactivation above |
 
 Version and compat are detected on `init` rather than on activation because a plugin updated in
 place — the normal case — never fires the activation hook again. An integration relying on
 activation alone would never see an upgrade.
+
+## `consent_after` — asking later
+
+Optional, and absent from the snippet unless the author set a delay on the dashboard. It postpones
+the opt-in prompt by a number of **seconds**, counted from the site's own activation:
+
+```php
+'consent_after' => 172800, // 2 days
+```
+
+Seconds, with the author's phrasing in the comment. The dashboard is where the duration is written
+as an amount and a unit — 2 days, 6 hours, 3 weeks — and it multiplies once, here. This end has no
+use for the phrasing and every use for a single number it can subtract from `time()`.
+
+Asking on a site's first day, before the plugin has done anything for anyone, is how a prompt gets
+dismissed without being read. A delay trades a smaller number of answers for better ones.
+
+**Unlike every other setting on that screen, this one reaches the release that carries it and no
+further.** The collection settings are enforced when data arrives, so changing them applies to
+installs already published; this prompt runs before the site has agreed to be in touch at all, so
+there is no request for the server to apply anything to. Changing it does nothing to copies already
+out there — only to the next release.
+
+Three things it deliberately will not do:
+
+- **It cannot silence the prompt.** Values above five years are clamped to five years, and anything
+  unreadable — `'30 days'`, `true`, a negative — resolves to 0, which asks immediately. A delay
+  nobody can wait out is a consent prompt that does not exist, shipped under a plugin that says it
+  collects consent. To not ask, pass `'enabled' => false`, which is honest about what it does.
+- **It does not restart.** The activation stamp is written once, so toggling the plugin does not push
+  the question further away each time.
+- **It does not apply where it cannot be measured.** A site that was already running the plugin when
+  this SDK arrived has no activation to count from, and is asked at the next opportunity rather than
+  never.
 
 ## What the author should not do
 
