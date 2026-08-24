@@ -23,6 +23,15 @@ use Codexpert\PluginTracker\Config;
 class Notice {
 
 	/**
+	 * How long a server-supplied notice lives when the server did not say, in seconds. Ninety days.
+	 *
+	 * There is no unbounded case. A notice with no expiry is one the server can never take back --
+	 * `Tracker::apply()` can only ever set this option, so a message sent once outlives the release
+	 * it warned about and every install keeps showing it.
+	 */
+	const NOTICE_TTL = 7776000;
+
+	/**
 	 * Config.
 	 *
 	 * @var Config
@@ -58,7 +67,16 @@ class Notice {
 			return;
 		}
 
-		$this->render_server_notice();
+		// The kill switch is checked before ANY output, server-supplied included. It used to sit
+		// below render_server_notice(), which meant a site that had switched the SDK off was still
+		// shown messages the SDK had fetched over the network.
+		if ( defined( 'CX_TRACKER_DISABLE' ) && CX_TRACKER_DISABLE ) {
+			return;
+		}
+
+		if ( $this->allowed( 'server' ) ) {
+			$this->render_server_notice();
+		}
 
 		// Only ask when the author has enabled telemetry, and only once -- an admin who declined
 		// is not asked again for this policy version.
@@ -66,15 +84,61 @@ class Notice {
 			return;
 		}
 
-		if ( defined( 'CX_TRACKER_DISABLE' ) && CX_TRACKER_DISABLE ) {
-			return;
-		}
-
 		if ( ! $this->due() ) {
 			return;
 		}
 
+		if ( ! $this->allowed( 'prompt' ) ) {
+			return;
+		}
+
 		$this->render_prompt();
+	}
+
+	/**
+	 * Render only the server-supplied notice. Network admin has no per-site consent to collect.
+	 *
+	 * @return void
+	 */
+	public function render_network() {
+
+		if ( ! current_user_can( 'manage_network_options' ) ) {
+			return;
+		}
+
+		if ( defined( 'CX_TRACKER_DISABLE' ) && CX_TRACKER_DISABLE ) {
+			return;
+		}
+
+		if ( $this->allowed( 'server' ) ) {
+			$this->render_server_notice();
+		}
+	}
+
+	/**
+	 * May this notice be shown?
+	 *
+	 * The one way to keep the SDK and suppress its built-in UI. Without it a consumer rendering
+	 * consent on their own settings screen had only `CX_TRACKER_DISABLE`, which also stops
+	 * telemetry -- so "move the prompt" and "switch the product off" were the same switch.
+	 *
+	 * @param string $which 'prompt' or 'server'.
+	 * @return bool
+	 */
+	private function allowed( $which ) {
+
+		if ( ! function_exists( 'apply_filters' ) ) {
+			return true;
+		}
+
+		/**
+		 * Filter whether a built-in admin notice is rendered.
+		 *
+		 * @param bool   $show   Whether to render.
+		 * @param string $which  'prompt' for the consent prompt, 'server' for a server-supplied notice.
+		 * @param string $plugin Consumer plugin slug.
+		 */
+		return (bool) apply_filters( 'cx_tracker_show_notice', true, $which, $this->config->plugin() );
 	}
 
 	/**
@@ -93,12 +157,8 @@ class Notice {
 	 */
 	private function due() {
 
-		$wait = $this->config->consent_after();
-
-		if ( $wait < 1 ) {
-			return true;
-		}
-
+		// Config floors this at CONSENT_AFTER_MIN, so there is no zero case to short-circuit.
+		$wait  = $this->config->consent_after();
 		$since = (int) get_option( $this->config->option( 'activated' ) );
 
 		if ( $since < 1 ) {
@@ -120,10 +180,9 @@ class Notice {
 	/**
 	 * User-facing prompt copy, filterable so a consumer can localise it.
 	 *
-	 * The SDK ships and loads its OWN translations from its own languages/ directory (see I18n),
-	 * so these strings are already translated wherever a .mo exists for the site's locale.
-	 * `load_plugin_textdomain()` cannot be used for that -- it resolves against the consumer's
-	 * plugin directory -- so I18n calls `load_textdomain()` with an explicit path instead.
+	 * The SDK loads its OWN text domain (see I18n), so these strings are translated wherever a .mo
+	 * for the site's locale has been placed under WP_LANG_DIR. None ships, so on most sites this
+	 * filter is what changes the wording.
 	 *
 	 * This filter is the additional override, for a consumer who wants the prompt to match their
 	 * own product's wording rather than merely translate it:
@@ -208,8 +267,24 @@ class Notice {
 			return;
 		}
 
-		if ( ! empty( $notice['until'] ) && time() > (int) $notice['until'] ) {
+		$message = (string) $notice['message'];
+		$until   = isset( $notice['until'] ) ? (int) $notice['until'] : 0;
+
+		// A row written before notices carried an expiry. Backfilled rather than deleted, which is
+		// what comparing against 0 would do.
+		if ( $until < 1 ) {
+			$until           = time() + self::NOTICE_TTL;
+			$notice['until'] = $until;
+			update_option( $this->config->option( 'notice' ), $notice, false );
+		}
+
+		if ( time() > $until ) {
 			delete_option( $this->config->option( 'notice' ) );
+			return;
+		}
+
+		// Keyed to the message, so dismissing one does not swallow the next.
+		if ( isset( $notice['dismissed'] ) && self::fingerprint( $message ) === $notice['dismissed'] ) {
 			return;
 		}
 
@@ -219,10 +294,41 @@ class Notice {
 			? $notice['level']
 			: 'info';
 
-		$name    = $this->config->name();
-		$message = (string) $notice['message'];
+		$name         = $this->config->name();
+		$plugin       = $this->config->plugin();
+		$action       = admin_url( 'admin-post.php' );
+		$nonce_action = 'cx_tracker_dismiss_' . $plugin;
+		$dismiss      = __( 'Dismiss', 'plugin-tracker-sdk' );
 
 		include __DIR__ . '/../../views/consent/server-notice.php';
+	}
+
+	/**
+	 * Identity of a stored message, so a dismissal cannot carry over to a different one.
+	 *
+	 * @param string $message Message.
+	 * @return string
+	 */
+	private static function fingerprint( $message ) {
+		return md5( (string) $message );
+	}
+
+	/**
+	 * Record that the current server-supplied message has been dismissed.
+	 *
+	 * @param Config $config Config.
+	 * @return void
+	 */
+	public static function dismiss( Config $config ) {
+		$notice = get_option( $config->option( 'notice' ) );
+
+		if ( ! is_array( $notice ) || empty( $notice['message'] ) ) {
+			return;
+		}
+
+		$notice['dismissed'] = self::fingerprint( (string) $notice['message'] );
+
+		update_option( $config->option( 'notice' ), $notice, false );
 	}
 
 	/**
@@ -246,10 +352,30 @@ class Notice {
 				// accept from the network.
 				'message' => substr( $notice['message'], 0, 500 ),
 				'level'   => isset( $notice['level'] ) ? (string) $notice['level'] : 'info',
-				'until'   => isset( $notice['until'] ) ? (int) $notice['until'] : 0,
+				'until'   => self::normalize_until( isset( $notice['until'] ) ? $notice['until'] : null ),
 			),
 			false
 		);
+	}
+
+	/**
+	 * Reduce a server-supplied `until` to a usable timestamp.
+	 *
+	 * `is_numeric()` rather than a bare cast: `(int) '2030-01-01'` is 2030, a 1970 timestamp, so an
+	 * ISO date used to drop the notice on its first render instead of showing it until 2030. A
+	 * readable timestamp is kept as written, including one already past -- that is the server saying
+	 * "do not show this" and is not ours to extend.
+	 *
+	 * @param mixed $until Raw value.
+	 * @return int
+	 */
+	private static function normalize_until( $until ) {
+
+		if ( ! is_numeric( $until ) || (int) $until < 1 ) {
+			return time() + self::NOTICE_TTL;
+		}
+
+		return (int) $until;
 	}
 
 	/**
@@ -273,18 +399,19 @@ class Notice {
 			return;
 		}
 
-		add_action(
-			'admin_notices',
-			function () use ( $errors ) {
-				if ( ! current_user_can( 'manage_options' ) ) {
-					return;
-				}
-				printf(
-					'<div class="notice notice-error"><p><strong>Plugin Tracker SDK misconfigured:</strong> %s</p></div>',
-					esc_html( implode( ' | ', $errors ) )
-				);
+		$render = function () use ( $errors ) {
+			if ( ! current_user_can( 'manage_options' ) ) {
+				return;
 			}
-		);
+			printf(
+				'<div class="notice notice-error"><p><strong>Plugin Tracker SDK misconfigured:</strong> %s</p></div>',
+				esc_html( implode( ' | ', $errors ) )
+			);
+		};
+
+		// Both screens: a network-activated plugin's only administrator may never open a site admin.
+		add_action( 'admin_notices', $render );
+		add_action( 'network_admin_notices', $render );
 	}
 
 	/**

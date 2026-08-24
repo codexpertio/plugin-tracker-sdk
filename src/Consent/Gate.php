@@ -207,6 +207,10 @@ class Gate {
 		// not defensible, and re-registration is cheap if they opt back in.
 		delete_option( $this->config->option( 'token' ) );
 
+		// Anything the server told this site to display. It arrived over a connection the site has
+		// now refused, and nothing can retract it afterwards -- an opted-out site never calls again.
+		Notice::forget( $this->config );
+
 		// Consequence, accepted deliberately and documented in CONSENT.md: a site that opts out and
 		// later opts back in gets a NEW install ID, so it counts more than once on the dashboard.
 		// Leaving a live identifier on a site that declined is the worse trade.

@@ -27,7 +27,7 @@ class NoticeTest extends PluginTrackerTestCase {
 		$consent = new Gate( $config );
 		$notice  = new Notice( $config, $consent );
 
-		Functions\stubEscapeFunctions();
+		$this->stub_prompt_dependencies();
 		Functions\when( 'current_user_can' )->justReturn( true );
 
 		$payload = '<script>alert(1)</script><img src=x onerror=alert(2)>';
@@ -442,12 +442,220 @@ class NoticeTest extends PluginTrackerTestCase {
 	}
 
 	/**
-	 * Zero is the default and the behaviour of every release shipped before this argument existed, so
-	 * an older snippet must keep asking exactly when it always did.
+	 * Zero is what a snippet generated before the floor existed still carries. Config raises it to
+	 * CONSENT_AFTER_MIN, so the prompt waits one second rather than landing on the page load that
+	 * activated the plugin.
 	 */
-	public function test_no_delay_asks_on_the_first_admin_load() {
-		$output = $this->render_with_delay( 0, time() );
+	public function test_a_zero_delay_waits_the_minimum_rather_than_asking_at_once() {
+		$this->assertStringNotContainsString(
+			'can send anonymous usage data',
+			$this->render_with_delay( 0, time() ),
+			'zero must not mean "ask on this very page load"'
+		);
 
-		$this->assertStringContainsString( 'can send anonymous usage data', $output );
+		$this->assertStringContainsString(
+			'can send anonymous usage data',
+			$this->render_with_delay( 0, time() - 5 )
+		);
+	}
+
+	/*
+	|--------------------------------------------------------------------------
+	| The server-supplied notice
+	|--------------------------------------------------------------------------
+	|
+	| It is the one string this SDK renders that neither the consumer nor the site administrator
+	| wrote, and until recently it was also the one nothing could take back.
+	*/
+
+	/**
+	 * @param array $notice    Payload as an ingestion response would carry it.
+	 * @param array $overrides Config overrides.
+	 * @return array{0: \Codexpert\PluginTracker\Config, 1: Gate, 2: Notice}
+	 */
+	private function make_server_notice( array $notice, array $overrides = array() ) {
+		$config  = $this->make_config( $overrides );
+		$consent = new Gate( $config );
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+
+		Notice::remember_server_notice( $config, $notice );
+
+		return array( $config, $consent, new Notice( $config, $consent ) );
+	}
+
+	/**
+	 * @param Notice $notice Notice.
+	 * @return string
+	 */
+	private function render( Notice $notice ) {
+		ob_start();
+		$notice->render();
+
+		return ob_get_clean();
+	}
+
+	/**
+	 * A response that does not say when the message stops being true used to store `until => 0`,
+	 * which `! empty()` read as "no expiry" -- so the message outlived the release it warned about
+	 * and every install kept showing it with nothing able to retract it.
+	 */
+	public function test_a_notice_with_no_expiry_is_given_one() {
+		list( $config, , $notice ) = $this->make_server_notice( array( 'message' => 'DEPRECATION' ) );
+
+		$stored = $this->stored( $config, 'notice' );
+
+		$this->assertGreaterThan( time(), $stored['until'], 'an absent expiry must become a real one' );
+		$this->assertLessThanOrEqual( time() + Notice::NOTICE_TTL, $stored['until'] );
+		$this->assertStringContainsString( 'DEPRECATION', $this->render( $notice ) );
+	}
+
+	/**
+	 * `(int) '2030-01-01'` is 2030, a 1970 timestamp -- so a human-readable date used to expire the
+	 * notice on its first render rather than in 2030. A cast is not a check.
+	 */
+	public function test_an_unreadable_expiry_does_not_silently_become_1970() {
+		list( $config, , $notice ) = $this->make_server_notice(
+			array(
+				'message' => 'ENDS SOMEDAY',
+				'until'   => '2030-01-01',
+			)
+		);
+
+		$this->assertGreaterThan( time(), $this->stored( $config, 'notice' )['until'] );
+		$this->assertStringContainsString( 'ENDS SOMEDAY', $this->render( $notice ) );
+	}
+
+	/**
+	 * A timestamp the server actually wrote is honoured as written, including one already past. That
+	 * is the server saying "do not show this", and it is not ours to extend.
+	 */
+	public function test_an_expiry_in_the_past_drops_the_notice() {
+		list( $config, , $notice ) = $this->make_server_notice(
+			array(
+				'message' => 'STALE',
+				'until'   => time() - 60,
+			)
+		);
+
+		$this->assertStringNotContainsString( 'STALE', $this->render( $notice ) );
+		$this->assertFalse( $this->stored( $config, 'notice' ), 'an expired notice is deleted, not merely hidden' );
+	}
+
+	/**
+	 * A row written before notices carried an expiry must be backfilled rather than deleted --
+	 * comparing `time()` against a stored 0 would wipe it on the first admin load after an upgrade.
+	 */
+	public function test_a_legacy_row_without_an_expiry_is_backfilled() {
+		$config = $this->make_config();
+
+		$this->stub_prompt_dependencies();
+		Functions\when( 'current_user_can' )->justReturn( true );
+
+		\PluginTracker_Test_Option_Store::update(
+			$config->option( 'notice' ),
+			array(
+				'message' => 'FROM AN OLDER SDK',
+				'level'   => 'warning',
+				'until'   => 0,
+			)
+		);
+
+		$notice = new Notice( $config, new Gate( $config ) );
+
+		$this->assertStringContainsString( 'FROM AN OLDER SDK', $this->render( $notice ) );
+		$this->assertGreaterThan( time(), $this->stored( $config, 'notice' )['until'] );
+	}
+
+	/**
+	 * Dismissal is keyed to the message, so silencing one does not swallow whatever the server says
+	 * next.
+	 */
+	public function test_dismissal_hides_one_message_and_not_the_next() {
+		list( $config, , $notice ) = $this->make_server_notice( array( 'message' => 'FIRST' ) );
+
+		Notice::dismiss( $config );
+
+		$this->assertStringNotContainsString( 'FIRST', $this->render( $notice ) );
+
+		Notice::remember_server_notice( $config, array( 'message' => 'SECOND' ) );
+
+		$this->assertStringContainsString( 'SECOND', $this->render( $notice ) );
+	}
+
+	/**
+	 * The kill switch is a site owner's "stop, entirely". It used to be checked AFTER the server
+	 * notice had already printed.
+	 *
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_the_kill_switch_silences_the_server_notice_too() {
+		define( 'CX_TRACKER_DISABLE', true );
+
+		list( , , $notice ) = $this->make_server_notice( array( 'message' => 'STILL SHOUTING' ) );
+
+		$this->assertStringNotContainsString( 'STILL SHOUTING', $this->render( $notice ) );
+	}
+
+	/**
+	 * An opt-out takes the whole conversation with it. A declining site never calls again, so a
+	 * message left behind is one nothing can ever retract.
+	 */
+	public function test_an_opt_out_deletes_the_server_notice() {
+		list( $config, $consent, $notice ) = $this->make_server_notice(
+			array( 'message' => 'SERVER SAYS HELLO' ),
+			array( 'enabled' => true )
+		);
+
+		Functions\when( 'wp_next_scheduled' )->justReturn( false );
+		Functions\when( 'wp_unschedule_event' )->justReturn( true );
+		Functions\when( 'wp_clear_scheduled_hook' )->justReturn( true );
+
+		$consent->opt_out();
+
+		$this->assertFalse( $this->stored( $config, 'notice' ) );
+		$this->assertStringNotContainsString( 'SERVER SAYS HELLO', $this->render( $notice ) );
+	}
+
+	/**
+	 * The filter is the only way to keep the SDK and move its UI. Without it a consumer rendering
+	 * consent on their own settings screen had CX_TRACKER_DISABLE, which also stops telemetry.
+	 */
+	public function test_the_show_filter_can_suppress_each_notice_independently() {
+		list( , , $notice ) = $this->make_server_notice(
+			array( 'message' => 'SERVER SAYS HELLO' ),
+			array( 'enabled' => true )
+		);
+
+		Functions\when( 'apply_filters' )->alias(
+			function ( $hook, $value, $which = '' ) {
+				return 'cx_tracker_show_notice' === $hook ? 'server' !== $which : $value;
+			}
+		);
+
+		$output = $this->render( $notice );
+
+		$this->assertStringNotContainsString( 'SERVER SAYS HELLO', $output, 'the server notice is suppressed' );
+		$this->assertStringContainsString( 'can send anonymous usage data', $output, 'the prompt is not' );
+	}
+
+	/**
+	 * Network admin gets the server notice and NOT the prompt: consent is stored per blog, so there
+	 * is no per-site answer for a network screen to collect.
+	 */
+	public function test_network_admin_gets_the_server_notice_but_not_the_prompt() {
+		list( , , $notice ) = $this->make_server_notice(
+			array( 'message' => 'SERVER SAYS HELLO' ),
+			array( 'enabled' => true )
+		);
+
+		ob_start();
+		$notice->render_network();
+		$output = ob_get_clean();
+
+		$this->assertStringContainsString( 'SERVER SAYS HELLO', $output );
+		$this->assertStringNotContainsString( 'can send anonymous usage data', $output );
 	}
 }

@@ -12,6 +12,7 @@ namespace Codexpert\PluginTracker\Test;
 use Brain\Monkey\Functions;
 use Codexpert\PluginTracker\Config;
 use Codexpert\PluginTracker\Consent\Gate;
+use Codexpert\PluginTracker\Consent\Notice;
 use Codexpert\PluginTracker\Cron\Scheduler;
 use Codexpert\PluginTracker\Event;
 use Codexpert\PluginTracker\Http\Transport;
@@ -1015,5 +1016,56 @@ class TrackerTest extends PluginTrackerTestCase {
 		$this->assertCount( 1, $captured );
 		$this->assertGreaterThanOrEqual( $before + 1, $captured[0] );
 		$this->assertLessThanOrEqual( $after + Tracker::RETRY_CAP, $captured[0] );
+	}
+
+	/*
+	|--------------------------------------------------------------------------
+	| The server-supplied notice is a channel, not a one-way write
+	|--------------------------------------------------------------------------
+	*/
+
+	/**
+	 * apply() could only ever SET this option, so a message the server sent once was permanent on
+	 * every install that received it -- there was no shape of response that took it back.
+	 */
+	public function test_a_successful_response_carrying_no_notice_retracts_a_stored_one() {
+		list( $tracker, $config ) = $this->tracker_ready_to_send();
+
+		Notice::remember_server_notice( $config, array( 'message' => 'DEPRECATED SOON' ) );
+
+		$this->seed_queue( $config, 1 );
+		$this->stub_remote_response(
+			200,
+			array(
+				'success' => true,
+				'data'    => array( 'accepted' => 1 ),
+			)
+		);
+		Functions\when( 'wp_doing_cron' )->justReturn( true );
+
+		$tracker->flush();
+
+		$this->assertFalse( $this->stored( $config, 'notice' ) );
+	}
+
+	/**
+	 * A failed send says nothing about whether the notice still holds, so it must not be read as a
+	 * retraction. Otherwise a site with a flaky connection would clear a live deprecation warning.
+	 */
+	public function test_a_failed_send_leaves_a_stored_notice_alone() {
+		list( $tracker, $config ) = $this->tracker_ready_to_send();
+
+		Notice::remember_server_notice( $config, array( 'message' => 'DEPRECATED SOON' ) );
+
+		$this->seed_queue( $config, 1 );
+		$this->stub_remote_response( 500, null );
+		Functions\when( 'wp_doing_cron' )->justReturn( true );
+
+		$tracker->flush();
+
+		$stored = $this->stored( $config, 'notice' );
+
+		$this->assertIsArray( $stored );
+		$this->assertSame( 'DEPRECATED SOON', $stored['message'] );
 	}
 }

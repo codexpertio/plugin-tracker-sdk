@@ -102,7 +102,7 @@ class Tracker {
 	 * Minor rather than patch because the wire format gained fields and consumers gain public API in
 	 * `Environment`, which is where the two readings moved so both lanes share one definition.
 	 */
-	const VERSION = '1.3.1';
+	const VERSION = '1.4.0';
 
 	/**
 	 * How many times one batch may be retried before it is dropped.
@@ -258,15 +258,35 @@ class Tracker {
 	 */
 	private function hook() {
 
-		// Before anything user-facing runs, so the consent prompt is translated on first render.
-		I18n::load();
+		// On `init`, not here. The generated snippet runs at plugin-include time, which is before
+		// pluggable.php loads and before any multilingual plugin has registered its locale filters --
+		// so resolving the locale here gave the site default and never the reader's own language.
+		$deferred = function_exists( 'add_action' )
+			&& ( ! function_exists( 'did_action' ) || ! did_action( 'init' ) );
+
+		if ( $deferred ) {
+			add_action( 'init', array( I18n::class, 'load' ) );
+		} else {
+			// A consumer that initialised after `init` has already run; adding the action there now
+			// would register a callback nothing will ever fire.
+			I18n::load();
+		}
 
 		add_action( $this->scheduler->hook(), array( $this, 'flush' ) );
 
 		// The consent prompt and any deprecation notice are admin-only concerns.
 		if ( function_exists( 'is_admin' ) && is_admin() ) {
-			add_action( 'admin_notices', array( new Notice( $this->config, $this->consent ), 'render' ) );
+			$notice = new Notice( $this->config, $this->consent );
+
+			add_action( 'admin_notices', array( $notice, 'render' ) );
+
+			// Consent is per-site (the options are per-blog), so only the server notice belongs on a
+			// network screen -- but it has to reach there, or a network-activated plugin's super admin
+			// never sees a deprecation warning at all.
+			add_action( 'network_admin_notices', array( $notice, 'render_network' ) );
+
 			add_action( 'admin_post_cx_tracker_consent_' . $this->config->plugin(), array( $this, 'handle_consent' ) );
+			add_action( 'admin_post_cx_tracker_dismiss_' . $this->config->plugin(), array( $this, 'handle_dismiss' ) );
 		}
 
 		// Scheduling is cheap and idempotent, and doing it on every load is what makes a missed
@@ -577,6 +597,10 @@ class Tracker {
 
 		if ( ! empty( $sent['notice'] ) ) {
 			Notice::remember_server_notice( $this->config, $sent['notice'] );
+		} elseif ( Transport::RESULT_OK === $sent['result'] ) {
+			// A successful response that carries no notice is the server retracting one. Without
+			// this the option could only ever be written, so a message sent once was permanent.
+			Notice::forget( $this->config );
 		}
 
 		if ( Transport::RESULT_OK === $sent['result'] ) {
@@ -880,10 +904,27 @@ class Tracker {
 	}
 
 	/**
-	 * Consent gate, for consumers that want to render their own UI.
+	 * Dismiss the server-supplied notice.
 	 *
-	 * @return Gate
+	 * Recorded against the message rather than as a blanket "never show these", so the next thing
+	 * the server has to say still reaches this site.
+	 *
+	 * @return void
 	 */
+	public function handle_dismiss() {
+
+		if ( ! current_user_can( 'manage_options' ) ) {
+			wp_die( esc_html__( 'You are not allowed to do that.', 'plugin-tracker-sdk' ), '', array( 'response' => 403 ) );
+		}
+
+		check_admin_referer( 'cx_tracker_dismiss_' . $this->config->plugin() );
+
+		Notice::dismiss( $this->config );
+
+		wp_safe_redirect( wp_get_referer() ? wp_get_referer() : admin_url() );
+		exit;
+	}
+
 	/**
 	 * Lifecycle listeners.
 	 *
