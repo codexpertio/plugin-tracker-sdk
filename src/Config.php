@@ -160,12 +160,14 @@ class Config {
 	 * the dashboard keeps "2 weeks" so it can say "2 weeks" back, and multiplies once on the way into
 	 * the snippet. Here it is arithmetic against `time()`.
 	 *
-	 * Zero -- ask on the first admin page load -- is the default and is what every release shipped
-	 * before this argument existed does, so an older snippet keeps its exact behaviour.
+	 * CONSENT_AFTER_MIN is the default and the floor. There is no "ask immediately": the value used
+	 * to allow zero, and a snippet that carried it -- deliberately or through a typo -- asked on the
+	 * first admin page load, before the plugin had done anything for anyone, which is how a prompt
+	 * gets dismissed reflexively. A dismissal is an answer that cannot be asked again.
 	 *
 	 * @var int
 	 */
-	private $consent_after = 0;
+	private $consent_after = self::CONSENT_AFTER_MIN;
 
 	/**
 	 * The longest delay this SDK will honour, in seconds. Five years.
@@ -179,6 +181,16 @@ class Config {
 	 * have to survive.
 	 */
 	const CONSENT_AFTER_MAX = 157680000;
+
+	/**
+	 * The shortest delay this SDK will honour, in seconds.
+	 *
+	 * One, not zero. Zero is the value an older snippet may still carry, and it is normalised up
+	 * rather than honoured -- a second is as soon as the prompt can legitimately be asked for, and
+	 * the difference from zero is not perceptible to anybody except the code that used to branch on
+	 * it.
+	 */
+	const CONSENT_AFTER_MIN = 1;
 
 	/**
 	 * Build from a consumer-supplied array.
@@ -196,7 +208,9 @@ class Config {
 		$this->enabled = ! empty( $args['enabled'] );
 		$this->collect = self::normalize_collect( isset( $args['collect'] ) ? $args['collect'] : self::COLLECT_ALL );
 
-		$this->consent_after = self::normalize_consent_after( isset( $args['consent_after'] ) ? $args['consent_after'] : 0 );
+		$this->consent_after = self::normalize_consent_after(
+			isset( $args['consent_after'] ) ? $args['consent_after'] : self::CONSENT_AFTER_MIN
+		);
 
 		if ( isset( $args['endpoint'] ) && is_string( $args['endpoint'] ) && '' !== $args['endpoint'] ) {
 			$this->endpoint = rtrim( $args['endpoint'], '/' );
@@ -644,7 +658,7 @@ class Config {
 	 *
 	 * So it takes effect from the release that carries it forward, and Notice is where it is applied.
 	 *
-	 * @return int Seconds, 0 to CONSENT_AFTER_MAX.
+	 * @return int Seconds, CONSENT_AFTER_MIN to CONSENT_AFTER_MAX.
 	 */
 	public function consent_after() {
 		return $this->consent_after;
@@ -653,10 +667,10 @@ class Config {
 	/**
 	 * Reduce a `consent_after` argument to a usable number of seconds.
 	 *
-	 * Everything unreadable resolves to 0, which asks SOONER rather than later. That direction is
-	 * the whole point: the failure worth guarding against is a typo or a hand-edited snippet
-	 * silencing the prompt indefinitely, and an admin asked on day one can decline in one click,
-	 * while an admin never asked has had the decision made for them.
+	 * Everything unreadable resolves to CONSENT_AFTER_MIN, which asks SOONER rather than later. That
+	 * direction is the whole point: the failure worth guarding against is a typo or a hand-edited
+	 * snippet silencing the prompt indefinitely, and an admin asked on day one can decline in one
+	 * click, while an admin never asked has had the decision made for them.
 	 *
 	 * `is_numeric()` rather than `is_int()`, because a cast is not a check -- `(int) '30 days'` is
 	 * 30, which would honour a value the author never wrote (and, read as seconds, would be half a
@@ -668,16 +682,16 @@ class Config {
 	private static function normalize_consent_after( $value ) {
 
 		if ( ! is_numeric( $value ) ) {
-			return 0;
+			return self::CONSENT_AFTER_MIN;
 		}
 
-		$days = (int) $value;
+		$seconds = (int) $value;
 
-		if ( $days < 1 ) {
-			return 0;
+		if ( $seconds < self::CONSENT_AFTER_MIN ) {
+			return self::CONSENT_AFTER_MIN;
 		}
 
-		return min( $days, self::CONSENT_AFTER_MAX );
+		return min( $seconds, self::CONSENT_AFTER_MAX );
 	}
 
 	/**

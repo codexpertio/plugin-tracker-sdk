@@ -186,13 +186,26 @@ The shipped prompt:
   email, user accounts, content);
 - is only shown when the author has enabled the project (`Config::enabled()`) and the admin hasn't
   already answered for the current policy version (`Gate::answered()`);
-- is suppressed entirely when `CX_TRACKER_DISABLE` is set;
+- is suppressed entirely when `CX_TRACKER_DISABLE` is set, and per-notice by the
+  `cx_tracker_show_notice` filter — which is how a consumer moves consent onto their own settings
+  screen without also switching telemetry off;
+- is not shown before `consent_after` has elapsed, which is at minimum one second and never zero;
+- appears on site admin screens only. Consent is stored per blog, so a network admin screen has no
+  per-site answer to collect;
 - offers "Allow" and "No thanks" as two equally-weighted submit buttons in the same form area — no
   pre-selection, no nagging on every subsequent page load once answered.
 
 `Notice` also renders two unrelated but similarly "ship it once" concerns: a server-supplied
 deprecation/advisory message (the only channel that reaches a site running a years-old bundled copy
-of the SDK), and a `WP_DEBUG`-only developer warning when `Config` fails validation.
+of the SDK), and a `WP_DEBUG`-only developer warning when `Config` fails validation. Both reach
+`network_admin_notices` as well, because a network-activated plugin's only administrator may never
+open a site admin screen.
+
+A server-supplied notice is bounded in three ways the site controls rather than the server: it
+expires (`Notice::NOTICE_TTL`, ninety days, when the response did not say when), it can be dismissed
+per message, and it is deleted outright by an opt-out along with everything else in
+`Gate::discard_state()`. A successful ingestion response carrying no notice retracts a stored one, so
+the channel can be taken back and not only written to.
 
 ## The deactivation-feedback modal is a separate consent basis
 

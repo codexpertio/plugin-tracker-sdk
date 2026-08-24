@@ -18,6 +18,11 @@ namespace Codexpert\PluginTracker;
  * The path is derived from this file's own location, so it keeps working in a scoped copy built by
  * .gitattributes (which keeps languages/ alongside src/) no matter where a consumer bundles it.
  *
+ * **No .mo ships.** languages/ carries the .pot and nothing else, and the bundled directory is
+ * overwritten whenever the consumer updates their plugin -- so in practice a translation has to live
+ * under WP_LANG_DIR, which is why that is searched first. Until one is put there the prompt is
+ * English, and the `cx_tracker_notice_strings` filter is the only other way to change it.
+ *
  * Consumers can still override any individual string through the `cx_tracker_notice_strings`
  * filter -- useful when a consumer wants the prompt to match their own product's wording rather
  * than merely translate it.
@@ -69,13 +74,39 @@ class I18n {
 			return false;
 		}
 
-		$mofile = self::languages_dir() . self::DOMAIN . '-' . $locale . '.mo';
-
-		if ( ! is_readable( $mofile ) ) {
-			return false;
+		foreach ( self::candidates( $locale ) as $mofile ) {
+			if ( is_readable( $mofile ) ) {
+				return (bool) load_textdomain( self::DOMAIN, $mofile );
+			}
 		}
 
-		return (bool) load_textdomain( self::DOMAIN, $mofile );
+		return false;
+	}
+
+	/**
+	 * Where a .mo for this locale may live, most specific first.
+	 *
+	 * The bundled directory is inside the consumer's plugin and is overwritten by every update of
+	 * that plugin, so it cannot hold a translation anybody added. `WP_LANG_DIR/plugin-tracker-sdk/`
+	 * is the site-owned location that survives -- and, since no .mo ships with the SDK, the only one
+	 * that has ever had anything in it.
+	 *
+	 * @param string $locale Locale.
+	 * @return array List of absolute paths.
+	 */
+	private static function candidates( $locale ) {
+
+		$file       = self::DOMAIN . '-' . $locale . '.mo';
+		$candidates = array();
+
+		if ( defined( 'WP_LANG_DIR' ) ) {
+			$candidates[] = WP_LANG_DIR . '/' . self::DOMAIN . '/' . $file;
+			$candidates[] = WP_LANG_DIR . '/plugins/' . $file;
+		}
+
+		$candidates[] = self::languages_dir() . $file;
+
+		return $candidates;
 	}
 
 	/**

@@ -11,17 +11,11 @@ same for the two. They differ in how the Tracker class is reached and in what th
 the dashboard has a switch and generates the matching one. An author who pastes the other one gets a
 fatal at activation, not a degradation, so this document covers both.
 
-> [!IMPORTANT]
-> **Order matters in this file, and not for readability.** `bin/build-dist.sh` learns what folder
-> the zip must unpack to by grepping this document for the first `__DIR__`-relative autoload path
-> and taking the directory out of it. The download snippet below is that first occurrence.
->
-> Anything written above it in that same shape captures the build instead — the Composer variant's
-> own autoload line qualifies, and so does an example that merely quotes the pattern. The zip then
-> unpacks to whatever that line named, the snippet's require resolves to nothing, and the author's
-> site fatals on activation. This note is deliberately worded to avoid matching it.
->
-> Keep the download snippet first, and re-run `composer dist` after editing this file.
+> [!NOTE]
+> This file used to be load-bearing for a build: `bin/build-dist.sh` learned the zip's root folder by
+> grepping it for the first `__DIR__`-relative autoload path. That build is gone — the download is the
+> tag's own `git archive`, trimmed by `.gitattributes` — so there is no `composer dist` to re-run and
+> no ordering rule to keep. The download snippet stays first because it is the common case.
 
 ## What the dashboard emits — downloaded zip
 
@@ -87,11 +81,10 @@ accessor.
 And the class is named outright. Nothing rewrites the namespace on this path, so there is no artifact
 to ask: the SDK's own unscoped `Tracker` is a fixed name that cannot go stale on upgrade.
 
-**That name is deliberately not written out below.** This file is copied into the scoped artifact,
-and `bin/build-dist.sh` refuses to ship an artifact containing any occurrence of the unscoped
-namespace — a check worth keeping, because a downloaded copy is exactly where that name must never
-appear: pasting it there is the activation fatal this whole design exists to avoid. The repository
-README carries the literal, where it is safe.
+**Both routes now ship the same unscoped namespace.** The per-version rewrite was dropped along with
+the build, so a site running two plugins that each bundle this SDK gets whichever copy's autoloader
+registered first, serving both — see the header of `autoload.php`. Asking `autoload.php` for the class
+name rather than writing it out is what keeps a generated snippet correct regardless.
 
 ```php
 // Composer's autoloader, which is what loads the SDK. Leave this out if your
@@ -233,7 +226,8 @@ Everything, without further involvement from the author:
 | `register_activation_hook` | `install` on the first activation ever, `activate` on every one |
 | `register_deactivation_hook` | `deactivation`, carrying the reason the modal collected if there is one — and sends it in the same request, because nothing later can |
 | `init` | Detects a plugin-version change (`version`) and a WP or PHP change (`compat`) |
-| `admin_notices` | The consent prompt, until the administrator answers it — or later, if `consent_after` says so |
+| `admin_notices` | The consent prompt, until the administrator answers it — or later, if `consent_after` says so; plus any server-supplied notice |
+| `network_admin_notices` | Server-supplied notices only. Consent is per-site, so the prompt is not shown here |
 | `admin_footer-plugins.php` | The deactivation-feedback modal, on this plugin's row only |
 | A scheduled job | The jittered flush; never on a page request, except the deactivation above |
 
@@ -266,9 +260,10 @@ out there — only to the next release.
 Three things it deliberately will not do:
 
 - **It cannot silence the prompt.** Values above five years are clamped to five years, and anything
-  unreadable — `'30 days'`, `true`, a negative — resolves to 0, which asks immediately. A delay
-  nobody can wait out is a consent prompt that does not exist, shipped under a plugin that says it
-  collects consent. To not ask, pass `'enabled' => false`, which is honest about what it does.
+  unreadable — `'30 days'`, `true`, a negative, `0` — resolves to `Config::CONSENT_AFTER_MIN`, which
+  is one second. A delay nobody can wait out is a consent prompt that does not exist, shipped under a
+  plugin that says it collects consent. To not ask, pass `'enabled' => false`, which is honest about
+  what it does.
 - **It does not restart.** The activation stamp is written once, so toggling the plugin does not push
   the question further away each time.
 - **It does not apply where it cannot be measured.** A site that was already running the plugin when
