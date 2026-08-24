@@ -324,11 +324,12 @@ consumer's own identity:
 
 CSS and JS are **inlined from PHP, and duplicated per bundled copy rather than shared**. Both are deliberate:
 
-- Inlined because `bin/build-dist.sh` ships only `find "${SRC_DIR}" -name '*.php'` plus a generated `autoload.php`, a
-  generated `composer.json`, `languages/` and `LICENSE`. A `.js` or `.css` file would never reach a consumer, and an
-  enqueued handle pointing at a missing file is a 404 on every `plugins.php` load.
-- Duplicated because a shared, deduplicated asset would mean one copy's CSS or JS governing another copy's markup —
-  precisely the cross-version coupling that `build-dist.sh` exists to eliminate.
+- Inlined because an enqueued handle pointing at a missing file is a 404 on every `plugins.php` load, and what reaches a
+  consumer is decided by `.gitattributes` rather than by anything in this directory. A `.php` view is included from disk
+  and is checked by the release workflow; a stray `.js` or `.css` would be neither.
+- Duplicated because a shared, deduplicated asset would mean one copy's CSS or JS governing another copy's markup. That
+  used to be prevented by the per-version namespace rewrite, which is gone — so the duplication is now the only thing
+  keeping two bundled copies from styling each other's rows.
 
 No jQuery. It happens to be present on `plugins.php` today, but a bundled library that breaks when a site dequeues a
 core script has made its consumer's problem worse, and nothing here needs it.
