@@ -103,7 +103,13 @@ jobs:
 
           missing=0
 
-          for path in autoload.php src/Tracker.php composer.json; do
+          # The views are the ones whose absence is FATAL rather than quiet: they are `include`d
+          # from disk, not autoloaded, and the consent prompt's include runs on a site owner's
+          # admin screen. .gitattributes warns about exactly this; nothing checked it.
+          for path in autoload.php src/Tracker.php composer.json \
+                      views/consent/prompt.php views/consent/server-notice.php \
+                      views/feedback/modal.php views/feedback/behaviour.php \
+                      languages/plugin-tracker-sdk.pot; do
             if ! grep -qx -- "${path}" /tmp/release-archive.list; then
               echo "::error::${path} is absent from the release archive. Check .gitattributes -- export-ignore governs what git archive emits, and it is what GitHub serves."
               missing=1
