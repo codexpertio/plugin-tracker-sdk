@@ -389,11 +389,20 @@ class ConfigTest extends PluginTrackerTestCase {
 	*/
 
 	/**
-	 * The default is the behaviour of every release shipped before the argument existed, so a snippet
-	 * that has never heard of it keeps asking exactly when it always did.
+	 * The floor, not zero. A snippet with no delay at all asks as soon as it legitimately can rather
+	 * than on the same page load that activated the plugin.
 	 */
-	public function test_consent_after_defaults_to_asking_immediately() {
-		$this->assertSame( 0, $this->make_config()->consent_after() );
+	public function test_consent_after_defaults_to_the_minimum() {
+		$this->assertSame( Config::CONSENT_AFTER_MIN, $this->make_config()->consent_after() );
+		$this->assertSame( 1, Config::CONSENT_AFTER_MIN, 'the minimum is one second' );
+	}
+
+	/**
+	 * Zero is what a snippet generated before the floor existed still carries. It is normalised up,
+	 * not honoured -- there is no "ask immediately" any more.
+	 */
+	public function test_a_zero_delay_from_an_older_snippet_is_raised_to_the_minimum() {
+		$this->assertSame( Config::CONSENT_AFTER_MIN, $this->make_config( array( 'consent_after' => 0 ) )->consent_after() );
 	}
 
 	public function test_consent_after_keeps_a_plain_number_of_seconds() {
@@ -416,11 +425,15 @@ class ConfigTest extends PluginTrackerTestCase {
 	 * A cast is not a check: `(int) '30 days'` is 30, which read as seconds is half a minute -- an
 	 * immediate prompt dressed as a delay. Unreadable values ask sooner, never later.
 	 */
-	public function test_an_unreadable_delay_asks_immediately() {
+	public function test_an_unreadable_delay_falls_to_the_minimum() {
 		foreach ( array( '30 days', 'soon', true, null, array(), -5 ) as $value ) {
 			$config = $this->make_config( array( 'consent_after' => $value ) );
 
-			$this->assertSame( 0, $config->consent_after(), 'an unreadable delay must not postpone the prompt' );
+			$this->assertSame(
+				Config::CONSENT_AFTER_MIN,
+				$config->consent_after(),
+				'an unreadable delay must not postpone the prompt'
+			);
 		}
 	}
 
